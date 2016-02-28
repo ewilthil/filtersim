@@ -45,6 +45,11 @@ class DWNA_filter:
         R_z = np.dot(Rot, np.dot(R_marked, Rot.T))
         return R_z
 
+    def convert_measurement(self, measurement):
+        R = self.measurement_noise_covariance(measurement)
+        x = measurement[0]*np.cos(measurement[1])
+        y = measurement[0]*np.sin(measurement[1])
+        return np.array([x, y]), R
+
     def step(self, measurement):
-        pass
-        
+        pos, cov = self.convert_measurement(measurement)

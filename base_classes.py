@@ -78,3 +78,6 @@ class Model:
             self.state[:,k] = odeint(self.ode, self.state[:,k-1], np.array([0, self.dt]),args=(k,))[-1,:]
         self.state_diff[:,k] = self.ode(self.state[:,k], 0, k)
 
+    def NED_vel(self, k):
+        R = euler_angles_to_matrix(self.state[self.eul,k])
+        return np.dot(R, self.state[self.nu[0:3],k])

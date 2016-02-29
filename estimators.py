@@ -29,3 +29,25 @@ class EKF:
         self.cov_posterior[:,:,k] = self.cov_prior[:,:,k] - np.dot(self.cov_prior[:,:,k],np.dot(H.T,np.dot(np.linalg.inv(S),np.dot(H,self.cov_prior[:,:,k]))))
         return self.est_posterior[:,k], self.cov_posterior[:,:,k]
 
+
+class KF:
+    def __init__(self, F, H, Q, R, est_init, cov_init):
+        self.F = F
+        self.Q = Q
+        self.H = H
+        self.R = R
+        self.cov_posterior = cov_init
+        self.est_posterior = est_init
+
+    def step_markov(self):
+        self.est_prior = np.dot(F, self.est_posterior)
+        self.cov_prior = np.dot(self.F, np.dot(self.est_posterior, self.F.T))+self.Q
+        return est_prior, est_posterior
+
+    def step_filter(self, measurement):
+        S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+R
+        K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(S)))
+        self.est_posterior = np.dot(K, measurement-self.H*self.est_prior)
+        cov = np.dot(np.identity(self.F.shape[0])-np.dot(K, self.H), self.cov_prior)
+        self.cov_posterior = 0.5*(cov+cov.T)
+        return est_posterior, cov_posterior

@@ -30,10 +30,13 @@ class DWNA_filter:
         self.dt = time[1]-time[0]
         self.time = time
         self.N = len(time)
-        self.state = np.zeros((4, N))
+        self.est_prior = np.zeros((4, self.N))
+        self.est_posterior = np.zeros((4,self.N))
+        self.cov_prior = np.zeros((4,4,self.N))
+        self.cov_posterior = np.zeros((4,4,self.N))
         Fsub = np.array([[1, self.dt],[0, 1]])
-        self.F = block_diag(Fsub, Fsub)
-        G = np.array([[T**2/2., 0],[T, 0],[0,T**2/2.],[0, T]])
+        F = block_diag(Fsub, Fsub)
+        G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
         Q = np.dot(G, np.dot(sigma_v, G.T))
         H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R_polar = R_polar
@@ -43,8 +46,11 @@ class DWNA_filter:
         r = measurement[0]
         alpha = measurement[1]
         Rot = np.array([[np.cos(alpha), -np.sin(alpha)],[np.sin(alpha), np.cos(alpha)]])
-        R_marked = self.R_polar
+        R_marked = np.zeros((2,2))
+        R_marked += self.R_polar
         R_marked[1,1] = R_marked[1,1]*r**2
+        print "R_marked: ", R_marked
+        print "Rot: ", Rot
         R_z = np.dot(Rot, np.dot(R_marked, Rot.T))
         return R_z
 
@@ -55,13 +61,14 @@ class DWNA_filter:
         return np.array([x, y]), R
 
     def step(self, measurement, k):
+        print "measurement: ", measurement
         pos_meas, cov_meas = self.convert_measurement(measurement)
+        print "pos measure: ", pos_meas
+        print "cov measure: ", cov_meas
+        self.filter.R = cov_meas
         if k > 0:
             est_prior, cov_prior = self.filter.step_markov()
         else:
             # The initial values for the filter is se
             est_prior, cov_prior = self.filter.est_posterior, self.filter.cov_posterior
-        self.filter.R = cov_meas
-        est_posterior, cov_posterior = self.filter.step_filter(measurement)
-        return est_prior, est_posterior, cov_prior, cov_posterior
-        
+        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)

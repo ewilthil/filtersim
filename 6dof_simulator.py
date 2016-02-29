@@ -33,9 +33,13 @@ ownship_init[6] = ownship_velocity
 target = Model(D, T, Q, target_init, time)
 ownship = Model(D, T, Q, ownship_init, time)
 
+def pitopi(ang):
+    return (ang+np.pi)%(2*np.pi)-np.pi
+
 def radar_measurement(x, x0):
     R = np.sqrt((x[0]-x0[0])**2+(x[1]-x0[1])**2)
-    alpha = (np.arctan2(x[1]-x0[1], x[0]-x0[0])-x0[5])%(2*np.pi)
+    alpha = np.arctan2(x[1]-x0[1], x[0]-x0[0])-x0[5]
+    alpha = pitopi(alpha)
     return np.array([R, alpha])
 
 M_imu = 1
@@ -48,7 +52,10 @@ q0 = np.array([0,0,0,1])
 v0 = np.array([10,0,0])
 p0 = np.array([0,0,0])
 navsys = nav.NavigationSystem(q0, v0, p0, imu_time, gps_time)
-ownship_radar = Sensor(radar_measurement, np.zeros(2), np.diag((1e-3, 1e-5)), radar_time)
+cov_radar = np.diag((2e1, 1e-4))
+ownship_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
+ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
+stationary_dwna = track.DWNA_filter(radar_time, 1./(M_radar*dt)*np.diag((1,1)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 20**2, 5**2, 5**2)))
 # Main loop
 print str(datetime.datetime.now())
 for k, t in enumerate(time):
@@ -70,7 +77,8 @@ for k, t in enumerate(time):
     k_radar, rest_radar = int(np.floor(k/M_radar)), np.mod(k, M_radar)
     if rest_radar == 0:
         ownship_radar.generate_measurement((target.state[:,k], ownship.state[:,k]), k_radar)
-
+        ground_radar.generate_measurement((target.state[:,k], np.zeros(6)), k_radar)
+        stationary_dwna.step(ground_radar.data[:,k_radar],k_radar)
 print str(datetime.datetime.now())
 viz.plot_pos_err(ownship, navsys)
 viz.plot_vel_err(ownship, navsys,boxplot=False)

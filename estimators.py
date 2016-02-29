@@ -36,18 +36,20 @@ class KF:
         self.Q = Q
         self.H = H
         self.R = R
+        self.cov_prior = cov_init
+        self.est_prior = est_init
         self.cov_posterior = cov_init
         self.est_posterior = est_init
 
     def step_markov(self):
-        self.est_prior = np.dot(F, self.est_posterior)
+        self.est_prior = np.dot(self.F, self.est_posterior)
         self.cov_prior = np.dot(self.F, np.dot(self.est_posterior, self.F.T))+self.Q
-        return est_prior, est_posterior
+        return self.est_prior, self.est_posterior
 
     def step_filter(self, measurement):
-        S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+R
+        S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
         K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(S)))
-        self.est_posterior = np.dot(K, measurement-self.H*self.est_prior)
+        self.est_posterior = self.est_prior+np.dot(K, measurement-np.dot(self.H,self.est_prior))
         cov = np.dot(np.identity(self.F.shape[0])-np.dot(K, self.H), self.cov_prior)
         self.cov_posterior = 0.5*(cov+cov.T)
-        return est_posterior, cov_posterior
+        return self.est_posterior, self.cov_posterior

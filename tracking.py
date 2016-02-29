@@ -1,7 +1,7 @@
 import numpy as np
 from base_classes import Sensor
 from scipy.linalg import block_diag
-
+from estimators import KF
 class IMM:
     def __init__(self, P_in):
         self.markov_probabilites = P_in
@@ -26,15 +26,18 @@ class IMM:
         pass
 
 class DWNA_filter:
-    # Assumes converted measurements. This means the measurement covariance will be range- and bearing-dependent
-    def __init__(self, T, sigma_w, R_polar):
-        self.dt = T
+    def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
+        self.dt = time[1]-time[0]
+        self.time = time
+        self.N = len(time)
+        self.state = np.zeros((4, N))
         Fsub = np.array([[1, self.dt],[0, 1]])
         self.F = block_diag(Fsub, Fsub)
         G = np.array([[T**2/2., 0],[T, 0],[0,T**2/2.],[0, T]])
-        self.Q = np.dot(G, np.dot(sigma_w, G.T))
-        self.H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
+        Q = np.dot(G, np.dot(sigma_v, G.T))
+        H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R_polar = R_polar
+        self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
     
     def measurement_noise_covariance(self, measurement):
         r = measurement[0]
@@ -51,5 +54,14 @@ class DWNA_filter:
         y = measurement[0]*np.sin(measurement[1])
         return np.array([x, y]), R
 
-    def step(self, measurement):
-        pos, cov = self.convert_measurement(measurement)
+    def step(self, measurement, k):
+        pos_meas, cov_meas = self.convert_measurement(measurement)
+        if k > 0:
+            est_prior, cov_prior = self.filter.step_markov()
+        else:
+            # The initial values for the filter is se
+            est_prior, cov_prior = self.filter.est_posterior, self.filter.cov_posterior
+        self.filter.R = cov_meas
+        est_posterior, cov_posterior = self.filter.step_filter(measurement)
+        return est_prior, est_posterior, cov_prior, cov_posterior
+        

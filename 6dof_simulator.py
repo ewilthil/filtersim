@@ -67,7 +67,7 @@ for k, t in enumerate(time):
         nav_eul = quaternion_to_euler_angles(nav_quat)
         #print ownship.state[0:2,k]-nav_pos[0:2]
         #print 180/np.pi*(ownship.state[5,k]-nav_eul[2])
-        navigation_dwna.update_sensor_pose(np.hstack((nav_pos[0:2], ownship.state[5,k])))
+        navigation_dwna.update_sensor_pose(np.hstack((nav_pos[0:2], nav_eul[2])))
         navigation_dwna.step(ownship_radar.data[:,k_radar],k_radar)
         perfect_dwna.update_sensor_pose(np.hstack((ownship.state[0:2,k], ownship.state[5,k])))
         perfect_dwna.step(ownship_radar.data[:,k_radar],k_radar)
@@ -85,7 +85,7 @@ _, ax_xy = plt.subplots(1,2)
 viz.target_xy(target, perfect_dwna, ax=ax_xy[0], measurements=xy_measurements)
 ax_xy[0].set_title('DWNA - moving perfect')
 viz.target_xy(target, navigation_dwna, ax=ax_xy[1], measurements=xy_measurements)
-ax_xy[1].set_title('DWNA - stationary')
+ax_xy[1].set_title('DWNA - navigation uncertainty')
 
 viz.target_velocity(target, navigation_dwna)
 viz.target_velocity(target, perfect_dwna)

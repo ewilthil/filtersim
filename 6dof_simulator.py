@@ -8,6 +8,7 @@ import datetime
 from base_classes import Model, Sensor
 from scipy.stats import chi2
 from autopy.sylte import load_pkl
+from autopy.conversion import quaternion_to_euler_angles
 plt.close('all')
 
 def pitopi(ang):
@@ -43,8 +44,8 @@ navsys = nav.NavigationSystem(q0, v0, p0, imu_time, gps_time)
 cov_radar = np.diag((35**2, (1*np.pi/180)**2))
 ownship_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
-stationary_dwna = track.DWNA_filter(radar_time, np.diag((0.07**2,0.07**2)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 5**2, 20**2, 5**2)))
-moving_dwna = track.DWNA_filter(radar_time, np.diag((0.07**2,0.07**2)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 5**2, 20**2, 5**2)))
+navigation_dwna = track.DWNA_filter(radar_time, np.diag((0.07**2,0.07**2)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 5**2, 20**2, 5**2)))
+perfect_dwna = track.DWNA_filter(radar_time, np.diag((0.07**2,0.07**2)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 5**2, 20**2, 5**2)))
 stationary_ct = track.CT_filter(radar_time, np.diag((0.1**2,0.1**2, (3*np.pi/180)**2)), cov_radar, np.hstack((np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]],0)), np.diag((20**2, 5**2, 20**2, 5**2, (3*np.pi/180)**2)))
 
 
@@ -62,9 +63,14 @@ for k, t in enumerate(time):
     if rest_radar == 0:
         ownship_radar.generate_measurement((target.state[:,k], ownship.state[:,k]), k_radar)
         ground_radar.generate_measurement((target.state[:,k], np.zeros(6)), k_radar)
-        stationary_dwna.step(ground_radar.data[:,k_radar],k_radar)
-        moving_dwna.update_sensor_pose(np.hstack((ownship.state[0:2,k], ownship.state[5,k])))
-        moving_dwna.step(ownship_radar.data[:,k_radar],k_radar)
+        nav_quat, _, nav_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
+        nav_eul = quaternion_to_euler_angles(nav_quat)
+        #print ownship.state[0:2,k]-nav_pos[0:2]
+        #print 180/np.pi*(ownship.state[5,k]-nav_eul[2])
+        navigation_dwna.update_sensor_pose(np.hstack((nav_pos[0:2], ownship.state[5,k])))
+        navigation_dwna.step(ownship_radar.data[:,k_radar],k_radar)
+        perfect_dwna.update_sensor_pose(np.hstack((ownship.state[0:2,k], ownship.state[5,k])))
+        perfect_dwna.step(ownship_radar.data[:,k_radar],k_radar)
         stationary_ct.step(ground_radar.data[:,k_radar],k_radar)
     # Evaluate error stuff
 
@@ -76,26 +82,26 @@ viz.plot_vel_err(ownship, navsys,boxplot=False)
 xy_measurements = [polar_to_cartesian(ground_radar.data[:,k]) for k in range(len(radar_time))]
 xy_measurements = np.vstack(xy_measurements).T
 _, ax_xy = plt.subplots(1,2)
-viz.target_xy(target, moving_dwna, ax=ax_xy[0], measurements=xy_measurements)
-ax_xy[0].set_title('DWNA - moving')
-viz.target_xy(target, stationary_dwna, ax=ax_xy[1], measurements=xy_measurements)
+viz.target_xy(target, perfect_dwna, ax=ax_xy[0], measurements=xy_measurements)
+ax_xy[0].set_title('DWNA - moving perfect')
+viz.target_xy(target, navigation_dwna, ax=ax_xy[1], measurements=xy_measurements)
 ax_xy[1].set_title('DWNA - stationary')
 
-viz.target_velocity(target, stationary_dwna)
-viz.target_velocity(target, moving_dwna)
-NEES = np.zeros_like(stationary_dwna.time)
-NEES_ct = np.zeros_like(stationary_dwna.time)
+viz.target_velocity(target, navigation_dwna)
+viz.target_velocity(target, perfect_dwna)
+NEES = np.zeros_like(navigation_dwna.time)
+NEES_ct = np.zeros_like(navigation_dwna.time)
 for k,_ in enumerate(NEES):
     true_vel = target.state_diff[0:2,k*M_radar]
-    est_vel = stationary_dwna.est_posterior[[1,3],k]
-    cov_vel = stationary_dwna.cov_posterior[[[1],[3]],[1,3],k]
+    est_vel = navigation_dwna.est_posterior[[1,3],k]
+    cov_vel = navigation_dwna.cov_posterior[[[1],[3]],[1,3],k]
     NEES[k] = np.dot(np.dot(true_vel-est_vel, np.linalg.inv(cov_vel)), true_vel-est_vel)
-    est_vel_ct = moving_dwna.est_posterior[[1,3],k]
-    cov_vel_ct = moving_dwna.cov_posterior[[[1],[3]],[1,3],k]
+    est_vel_ct = perfect_dwna.est_posterior[[1,3],k]
+    cov_vel_ct = perfect_dwna.cov_posterior[[[1],[3]],[1,3],k]
     NEES_ct[k] = np.dot(np.dot(true_vel-est_vel_ct, np.linalg.inv(cov_vel_ct)), true_vel-est_vel_ct)
 UB = chi2(df=2*N_MC).ppf(0.975)*np.ones_like(NEES)/N_MC
 LB = chi2(df=2*N_MC).ppf(0.025)*np.ones_like(NEES)/N_MC
-time_vel = stationary_dwna.time
+time_vel = navigation_dwna.time
 const_fig, const_ax = plt.subplots(1,1)
 [const_ax.plot(time_vel, elem) for elem in [NEES, NEES_ct, UB, LB]]
 plt.figure()

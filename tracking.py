@@ -67,8 +67,39 @@ def convert_measurement(measurement, R_polar):
     return np.array([x, y]), R_z
 
 class CT_filter:
-    def __init__(self, time):
-        pass
+    def __init__(self, time, R_polar):
+        self.R_polar = R_polar
 
-    def measurement_noise_covariance(self, measurement):
-        pass
+    def step(self, measurement, k):
+        pos_meas, cov_meas = convert_measurement(measurement, self.R_polar)
+        self.R[:,:,k] = cov_meas
+
+    def construct_F(self, state):
+        F = np.zeros((5,5))
+        v_N = state[1]
+        v_E = state[3]
+        w_threshold = 0.1*np.pi/180
+        if np.abs(state[4]) > w_threshold:
+            w = state[4]
+        else:
+            w = w_threshold
+        wT = w*self.dt
+        swT = np.sin(wT)
+        cwT = np.cos(wT)
+        # Go over each column and fill in
+        F[0,0] = 1
+        F[0,1] = swT/w
+        F[1,1] = cwT
+        F[2,1] = (1-cwT)/w
+        F[3,1] = swT
+        F[2,2] = 1
+        F[0,3] = -(1-cwT)/w
+        F[1,3] = -swT
+        F[2,3] = swT/w
+        F[3,3] = cwT
+        F[0,4] = v_N*(wT*cwT-swT)/w**2 - v_E*(wT*swT-1+cwT)/w**2
+        F[1,4] = -self.dt*swT*v_N - self.dt*cwT*v_E
+        F[2,4] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
+        F[3,4] = self.dt*cwT*v_N - self.dt*swT*v_E
+        F[4,4] = 1
+        return F

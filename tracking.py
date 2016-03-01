@@ -2,6 +2,7 @@ import numpy as np
 from base_classes import Sensor
 from scipy.linalg import block_diag
 from estimators import KF, EKF
+from autopy.conversion import heading_to_matrix_2D
 class IMM:
     def __init__(self, P_in):
         self.markov_probabilites = P_in
@@ -25,9 +26,38 @@ class IMM:
     def step(self):
         pass
 
+class TrackingFilter:
+    def __init__(self, pose=np.zeros(3)):
+        self.pose = pose
 
-class DWNA_filter:
+    def step(self, measurement, k):
+        pos_meas, cov_meas = self.convert_measurement(measurement)
+        self.R[:,:,k] = cov_meas
+        self.filter.R = cov_meas
+        if k > 0:
+            self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
+        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)
+
+    def convert_measurement(self, measurement):
+        r = measurement[0]
+        alpha = measurement[1]
+        Rot = heading_to_matrix_2D(alpha)
+        R_marked = np.zeros((2,2))
+        R_marked += self.R_polar
+        R_marked[1,1] = R_marked[1,1]*r**2
+        R_z = np.dot(Rot, np.dot(R_marked, Rot.T))
+        x = r*np.cos(alpha)
+        y = r*np.sin(alpha)
+        pos_local = np.array([x,y])
+        pos_global = self.pose[0:2]+np.dot(heading_to_matrix_2D(self.pose[2]), pos_local)
+        return pos_global, R_z
+    
+    def update_sensor_pose(self, pose):
+        self.pose = pose
+
+class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
+        TrackingFilter.__init__(self)
         self.dt = time[1]-time[0]
         self.time = time
         self.N = len(time)
@@ -46,25 +76,7 @@ class DWNA_filter:
         self.R_polar = R_polar
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
     
-    def step(self, measurement, k):
-        pos_meas, cov_meas = convert_measurement(measurement, self.R_polar)
-        self.R[:,:,k] = cov_meas
-        self.filter.R = cov_meas
-        if k > 0:
-            self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
-        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)
 
-def convert_measurement(measurement, R_polar):
-    r = measurement[0]
-    alpha = measurement[1]
-    Rot = np.array([[np.cos(alpha), -np.sin(alpha)],[np.sin(alpha), np.cos(alpha)]])
-    R_marked = np.zeros((2,2))
-    R_marked += R_polar
-    R_marked[1,1] = R_marked[1,1]*r**2
-    R_z = np.dot(Rot, np.dot(R_marked, Rot.T))
-    x = r*np.cos(alpha)
-    y = r*np.sin(alpha)
-    return np.array([x, y]), R_z
 
 def state_elements(state, dt):
     v_N = state[1]
@@ -116,8 +128,9 @@ def CT_markov_jacobian(x, dt):
     F[4,4] = np.exp(-1/1)
     return F
 
-class CT_filter:
+class CT_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
+        TrackingFilter.__init__(self)
         self.dt = time[1]-time[0]
         self.time = time
         self.N = len(time)
@@ -133,12 +146,3 @@ class CT_filter:
         G = np.array([[self.dt**2/2., 0, 0],[self.dt, 0, 0],[0,self.dt**2/2., 0],[0, self.dt, 0],[0, 0, self.dt]])
         Q = np.dot(G, np.dot(sigma_v, G.T))
         self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), Q, np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
-
-    def step(self, measurement, k):
-        pos_meas, cov_meas = convert_measurement(measurement, self.R_polar)
-        self.R[:,:,k] = cov_meas
-        self.filter.R = cov_meas
-        if k > 0:
-            self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
-        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)
-

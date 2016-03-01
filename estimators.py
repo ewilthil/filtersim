@@ -43,13 +43,13 @@ class KF:
 
     def step_markov(self):
         self.est_prior = np.dot(self.F, self.est_posterior)
-        self.cov_prior = np.dot(self.F, np.dot(self.est_posterior, self.F.T))+self.Q
-        return self.est_prior, self.est_posterior
+        self.cov_prior = np.dot(self.F, np.dot(self.cov_posterior, self.F.T))+self.Q
+        return self.est_prior, self.est_prior
 
     def step_filter(self, measurement):
         S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
         K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(S)))
         self.est_posterior = self.est_prior+np.dot(K, measurement-np.dot(self.H,self.est_prior))
         cov = np.dot(np.identity(self.F.shape[0])-np.dot(K, self.H), self.cov_prior)
-        self.cov_posterior = 0.5*(cov+cov.T)
+        self.cov_posterior = cov #0.5*(cov+cov.T)
         return self.est_posterior, self.cov_posterior

@@ -91,5 +91,11 @@ def box_plot_vel(err, cov):
 def plot_xy_pos(targets):
     fig, ax = plt.subplots(1,1)
     for t in targets:
-        ax.plot(t.state[1,:], t.state[0,:],)
+        plot_xy_trajectory(ax, t.state[1,:], t.state[0,:])
     return fig, ax
+
+def plot_xy_trajectory(ax, xdata, ydata, linestyle=None):
+    if linestyle==None:
+        ax.plot(xdata, ydata)
+    else:
+        ax.plot(xdata, ydata, linestyle)

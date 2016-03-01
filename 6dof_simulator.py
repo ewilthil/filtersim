@@ -63,6 +63,7 @@ cov_radar = np.diag((35**2, (1*np.pi/180)**2))
 ownship_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 stationary_dwna = track.DWNA_filter(radar_time, np.diag((0.1**2,0.1**2)), cov_radar, np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]], np.diag((20**2, 5**2, 20**2, 5**2)))
+stationary_ct = track.CT_filter(radar_time, np.diag((0.1**2,0.1**2, 0.1**2)), cov_radar, np.hstack((np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]],0)), np.diag((20**2, 5**2, 20**2, 5**2, (1*np.pi/180)**2)))
 # Main loop
 print str(datetime.datetime.now())
 for k, t in enumerate(time):
@@ -86,12 +87,15 @@ for k, t in enumerate(time):
         ownship_radar.generate_measurement((target.state[:,k], ownship.state[:,k]), k_radar)
         ground_radar.generate_measurement((target.state[:,k], np.zeros(6)), k_radar)
         stationary_dwna.step(ground_radar.data[:,k_radar],k_radar)
+        stationary_ct.step(ground_radar.data[:,k_radar],k_radar)
 print str(datetime.datetime.now())
 viz.plot_pos_err(ownship, navsys)
 viz.plot_vel_err(ownship, navsys,boxplot=False)
 _, ax = viz.plot_xy_pos((ownship, target))
 viz.plot_xy_trajectory(ax, stationary_dwna.est_prior[2,:], stationary_dwna.est_prior[0,:], 'r--')
 viz.plot_xy_trajectory(ax, stationary_dwna.est_posterior[2,:], stationary_dwna.est_posterior[0,:], 'g--')
+viz.plot_xy_trajectory(ax, stationary_ct.est_prior[2,:], stationary_dwna.est_prior[0,:], 'b--')
+viz.plot_xy_trajectory(ax, stationary_ct.est_posterior[2,:], stationary_dwna.est_posterior[0,:], 'y--')
 xy_measurements = [polar_to_cartesian(ground_radar.data[:,k]) for k in range(len(radar_time))]
 xy_measurements = np.vstack(xy_measurements).T
 viz.plot_xy_trajectory(ax, xy_measurements[1,:], xy_measurements[0,:], 'b*')
@@ -106,7 +110,6 @@ vel_ax[1].plot(target.time, target.state_diff[1,:])
 
 NEES = np.zeros_like(stationary_dwna.time)
 for k,_ in enumerate(NEES):
-    print target.time[k*M_radar], stationary_dwna.time[k]
     true_vel = target.state_diff[0:2,k*M_radar]
     est_vel = stationary_dwna.est_posterior[[1,3],k]
     cov_vel = stationary_dwna.cov_posterior[[[1],[3]],[1,3],k]

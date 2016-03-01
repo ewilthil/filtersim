@@ -2,7 +2,7 @@ import numpy as np
 from autopy.conversion import quat_to_rot, quat_mul, quat_conj
 from scipy.linalg import expm, block_diag
 from scipy.stats import multivariate_normal
-from estimators import EKF
+from estimators import EKF_navigation
 from tf.transformations import euler_matrix
 from base_classes import Sensor
 
@@ -34,7 +34,7 @@ class NavigationSystem:
         cov_init[3:6,3:6] = 2**2*np.identity(3)
         cov_init[6:9,6:9] = 10**2*np.identity(3)
         cov_init[9:15,9:15] = 1e-5*np.identity(6)
-        self.EKF = EKF(0, 0, self.GPS.R, np.zeros(15), cov_init, gps_time)
+        self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(15), cov_init, gps_time)
         self.Q_cont = 1e-6*np.identity(15)
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)

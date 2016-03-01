@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from tf.transformations import euler_matrix
 from autopy.conversion import euler_angles_to_quaternion
 from scipy.stats import multivariate_normal
+from autopy.plotting import get_ellipse
 
 def euler_to_matrix(ang):
         phi, theta, psi = ang[0], ang[1], ang[2]
@@ -99,3 +100,32 @@ def plot_xy_trajectory(ax, xdata, ydata, linestyle=None):
         ax.plot(xdata, ydata)
     else:
         ax.plot(xdata, ydata, linestyle)
+
+# Target tracking
+def target_xy(target, est, ax=None, measurements=None):
+    if ax is None:
+        fig, ax = plt.subplots(1,1)
+    else:
+        fig = ax.get_figure()
+    if measurements is not None:
+        ax.plot(measurements[1,:], measurements[0,:], 'k.', alpha=0.4)
+    ax.plot(target.state[1,:], target.state[0,:], 'k', label='True state')
+    ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], 'b', label='Posterior estimates')
+    cov = est.cov_posterior[[[2],[0]],[2,0],:] # pick out E and N elements
+    inds = np.arange(0, len(est.time)+1, len(est.time)/15)
+    for k in inds:
+        el = get_ellipse(est.est_posterior[[2,0],k], cov[:,:,k], gamma=6)
+        el.set_color('b')
+        ax.add_artist(el)
+    ax.set_aspect('equal')
+    return fig, ax
+
+def target_velocity(target, est):
+    fig, ax = plt.subplots(2,1)
+    ax[0].plot(target.time, target.state_diff[0,:], 'k', label='True state')
+    ax[0].errorbar(est.time, est.est_posterior[1,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[1,1,:])), errorevery=len(est.time)/30, color='b')
+    ax[0].set_title('North velocity')
+    ax[1].plot(target.time, target.state_diff[1,:], 'k', label='True state')
+    ax[1].errorbar(est.time, est.est_posterior[3,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[3,3,:])), errorevery=len(est.time)/30, color='b')
+    ax[1].set_title('East velocity')
+    return fig, ax

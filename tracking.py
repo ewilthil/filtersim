@@ -92,7 +92,7 @@ def CT_markov(x, dt):
     f[1,3] = -swT
     f[2,3] = swT/w
     f[3,3] = cwT
-    f[4,4] = 1
+    f[4,4] = np.exp(-1/1)
     return np.dot(f, x)
 
 def CT_markov_jacobian(x, dt):
@@ -113,7 +113,7 @@ def CT_markov_jacobian(x, dt):
     F[1,4] = -dt*swT*v_N - dt*cwT*v_E
     F[2,4] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
     F[3,4] = dt*cwT*v_N - dt*swT*v_E
-    F[4,4] = 1
+    F[4,4] = np.exp(-1/1)
     return F
 
 class CT_filter:

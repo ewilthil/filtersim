@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tf.transformations import euler_matrix
-from autopy.conversion import euler_angles_to_quaternion
+from autopy.conversion import euler_angles_to_quaternion, quaternion_to_euler_angles
 from scipy.stats import multivariate_normal
 from autopy.plotting import get_ellipse
 
@@ -11,8 +11,17 @@ def euler_to_matrix(ang):
         return R[0:3,0:3]
 
 
-
-
+# Navigation
+def plot_angle_error(ship, navsys, ax=None):
+    if ax == None:
+        fig, ax = plt.subplots(3,1)
+    time = ship.time
+    true_eul = ship.state[3:6,:]
+    est_quat = navsys.strapdown.data[navsys.strapdown.orient, :]
+    est_eul = quaternion_to_euler_angles(est_quat.T).T
+    ax[0].plot(time, 180/np.pi*true_eul[0,:], 'k', time, 180/np.pi*est_eul[0,:])
+    ax[1].plot(time, 180/np.pi*true_eul[1,:], 'k', time, 180/np.pi*est_eul[1,:])
+    ax[2].plot(time, 180/np.pi*true_eul[2,:], 'k', time, 180/np.pi*est_eul[2,:])
 def plot_pos_err(ship, navsys, ax=None):
     if ax == None:
         fig, ax = plt.subplots(3,1)
@@ -129,3 +138,4 @@ def target_velocity(target, est):
     ax[1].errorbar(est.time, est.est_posterior[3,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[3,3,:])), errorevery=len(est.time)/30, color='b')
     ax[1].set_title('East velocity')
     return fig, ax
+

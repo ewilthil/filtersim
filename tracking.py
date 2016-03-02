@@ -205,7 +205,7 @@ def CT_markov(x, dt):
     f[1,3] = -swT
     f[2,3] = swT/w
     f[3,3] = cwT
-    f[4,4] = np.exp(-1./10)
+    f[4,4] = 1
     return np.dot(f, x)
 
 def CT_markov_jacobian(x, dt):
@@ -226,7 +226,7 @@ def CT_markov_jacobian(x, dt):
     F[1,4] = -dt*swT*v_N - dt*cwT*v_E
     F[2,4] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
     F[3,4] = dt*cwT*v_N - dt*swT*v_E
-    F[4,4] = np.exp(-1./10)
+    F[4,4] = 1
     return F
 
 class CT_filter(TrackingFilter):
@@ -237,3 +237,19 @@ class CT_filter(TrackingFilter):
         G = np.array([[self.dt**2/2., 0, 0],[self.dt, 0, 0],[0,self.dt**2/2., 0],[0, self.dt, 0],[0, 0, self.dt]])
         Q = np.dot(G, np.dot(sigma_v, G.T))
         self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), Q, np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
+
+class CT_known(TrackingFilter):
+    def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega):
+        TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
+        F = self.construct_F(omega)
+        G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
+        Q = np.dot(G, np.dot(sigma_v, G.T))
+        H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
+        self.R = np.zeros((2,2,self.N))
+        self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
+
+    def construct_F(self, w):
+        wT = omega.self.dt
+        swT = np.sin(wT)
+        cwT = np.sin(wT)
+        return np.array([[1, swT/w, 0, -(1-cwT)/w],[0, cwT, 0, -swT],[0, (1-cwT)/w, 1, swT/w],[0, swT, 0, cwT]])

@@ -46,6 +46,7 @@ class KF:
         return self.est_prior, self.est_prior
 
     def step_filter(self, measurement):
+        self.measurement = measurement
         self.S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
         K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(self.S)))
         self.measurement_prediction = np.dot(self.H, self.est_prior)
@@ -81,6 +82,7 @@ class EKF:
         return self.est_prior, self.cov_prior
     
     def step_filter(self, measurement):
+        self.measurement = measurement
         H_k = self.H(self.est_prior)
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))

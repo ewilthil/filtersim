@@ -1,4 +1,5 @@
 import numpy as np
+import ipdb
 from base_classes import Sensor
 from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
@@ -79,7 +80,7 @@ class IMM:
                 x_temp = x_temp[:,None]
             x[:,:,j] = x_temp
             cov[:,:,j] = cov_temp
-            likelihood[j] = self.filter_bank[j].evaluate_likelihood(polar_to_cartesian(z))
+            likelihood[j] = self.filter_bank[j].evaluate_likelihood(k)
         return x, cov, likelihood
 
     def step(self, z, k, new_pose):
@@ -136,11 +137,34 @@ class TrackingFilter:
         pos_global = self.pose[0:2]+np.dot(heading_to_matrix_2D(self.pose[2]), pos_local)
         return pos_global, R_z
     
+    def biased_conversion(self, z):
+        range_measure = z[0]
+        ang_measure = z[1]
+        cov_range = self.R_polar[0,0]
+        cov_ang = self.R_polar[1,1]
+        cos_ang = np.cos(ang_measure)
+        sin_ang = np.sin(ang_measure)
+        mean_factor = 1- np.exp(-cov_ang)+np.exp(-cov_ang/2)
+        x = range_measure*cos_ang*mean_factor
+        y = range_measure*sin_ang*mean_factor
+        R_11 = (range_measure**2)*np.exp(-2*cov_ang)*(cos_ang**2*(np.cosh(2*cov_ang)-np.cosh(cov_ang))+sin_ang**2*(np.sinh(2*cov_ang)-np.sinh(cov_ang)))
+        R_11 += cov_range*np.exp(-2*cov_ang)*(cos_ang**2*(2*np.cosh(2*cov_ang)-np.cosh(cov_ang))+sin_ang**2*(2*np.sinh(2*cov_ang)-np.sinh(cov_ang)))
+        R_22 = (range_measure**2)*np.exp(-2*cov_ang)*(sin_ang**2*(np.cosh(2*cov_ang)-np.cosh(cov_ang))+cos_ang**2*(np.sinh(2*cov_ang)-np.sinh(cov_ang)))
+        R_22 += cov_range*np.exp(-2*cov_ang)*(sin_ang**2*(2*np.cosh(2*cov_ang)-np.cosh(cov_ang))+cos_ang**2*(2*np.sinh(2*cov_ang)-np.sinh(cov_ang)))
+        R_12 = sin_ang*cos_ang*np.exp(-4*cov_ang)*(cov_range+(range_measure**2+cov_range)*(1-np.exp(cov_ang)))
+        pos_local = np.array([x,y])
+        cov_local = np.array([[R_11, R_12],[R_12,R_22]])
+        pos_global = self.pose[0:2]+np.dot(heading_to_matrix_2D(self.pose[2]), pos_local)
+        cov_global = cov_local
+        return pos_global, cov_global
+
+
     def update_sensor_pose(self, pose):
         self.pose = pose
 
-    def evaluate_likelihood(self, z):
-        return multivariate_normal.pdf(z, mean=self.filter.measurement_prediction, cov=self.filter.S)
+    def evaluate_likelihood(self, k):
+        diff = self.filter.measurement-self.filter.measurement_prediction
+        return multivariate_normal.pdf(diff, mean=np.zeros_like(diff), cov=self.filter.S)
 
 class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):

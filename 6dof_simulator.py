@@ -73,7 +73,7 @@ for k, t in enumerate(time):
         navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
         perfect_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
         stationary_imm.step(ground_radar.data[:,k_radar], k_radar, np.zeros(3))
-        #ship_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose)
+        ship_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose)
     # Evaluate error stuff
 
 print str(datetime.datetime.now())

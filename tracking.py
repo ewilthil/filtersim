@@ -140,7 +140,7 @@ class TrackingFilter:
         self.pose = pose
 
     def evaluate_likelihood(self, z):
-        return multivariate_normal.pdf(z, mean=self.filter.measurement_prediction, cov=self.filter.R)
+        return multivariate_normal.pdf(z, mean=self.filter.measurement_prediction, cov=self.filter.S)
 
 class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):

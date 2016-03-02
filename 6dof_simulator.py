@@ -48,14 +48,11 @@ ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 track_init_pos = np.hstack((np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]],0))
 track_init_cov = np.diag((20**2, 5**2, 20**2, 5**2, (1*np.pi/180)**2))
 pi_imm = np.array([[0.8, 0.2],[0.4, 0.6]])
-sigma_dwna = np.diag((0.2**2, 0.2**2))
-sigma_ct = np.diag((0.4**2, 0.4**2, (4*np.pi/180)**2))
+sigma_dwna = np.diag((0.4**2, 0.4**2))
+sigma_ct = np.diag((0.5**2, 0.5**2, (4*np.pi/180)**2))
 sigmas = (sigma_dwna, sigma_ct)
 stationary_imm = track.IMM(pi_imm, radar_time, sigmas, track_init_pos, track_init_cov, cov_radar)
-navigation_dwna = track.DWNA_filter(radar_time, sigma_dwna, cov_radar, track_init_pos[0:4], track_init_cov[0:4,0:4])
-perfect_dwna = track.DWNA_filter(radar_time, sigma_dwna, cov_radar, track_init_pos[0:4], track_init_cov[0:4,0:4])
-stationary_ct = track.CT_filter(radar_time, sigma_ct, cov_radar, track_init_pos, track_init_cov)
-
+ship_imm = track.IMM(pi_imm, radar_time, sigmas, track_init_pos, track_init_cov, cov_radar)
 
 # Main loop
 print str(datetime.datetime.now())
@@ -73,14 +70,10 @@ for k, t in enumerate(time):
         ground_radar.generate_measurement((target.state[:,k], np.zeros(6)), k_radar)
         nav_quat, _, nav_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
         nav_eul = quaternion_to_euler_angles(nav_quat)
-        #print ownship.state[0:2,k]-nav_pos[0:2]
-        #print 180/np.pi*(ownship.state[5,k]-nav_eul[2])
-        navigation_dwna.update_sensor_pose(np.hstack((nav_pos[0:2], nav_eul[2])))
-        navigation_dwna.step(ownship_radar.data[:,k_radar],k_radar)
-        perfect_dwna.update_sensor_pose(np.hstack((ownship.state[0:2,k], ownship.state[5,k])))
-        perfect_dwna.step(ownship_radar.data[:,k_radar],k_radar)
-        stationary_ct.step(ground_radar.data[:,k_radar],k_radar)
+        navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
+        perfect_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
         stationary_imm.step(ground_radar.data[:,k_radar], k_radar, np.zeros(3))
+        #ship_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose)
     # Evaluate error stuff
 
 print str(datetime.datetime.now())
@@ -90,39 +83,32 @@ viz.plot_vel_err(ownship, navsys,boxplot=False)
 # Tracking results
 xy_measurements = [polar_to_cartesian(ground_radar.data[:,k]) for k in range(len(radar_time))]
 xy_measurements = np.vstack(xy_measurements).T
-_, ax_xy = plt.subplots(1,3)
-viz.target_xy(target, perfect_dwna, ax=ax_xy[0], measurements=xy_measurements)
-ax_xy[0].set_title('DWNA - moving perfect')
-viz.target_xy(target, navigation_dwna, ax=ax_xy[1], measurements=xy_measurements)
-ax_xy[1].set_title('DWNA - navigation uncertainty')
-viz.target_xy(target, stationary_imm, ax=ax_xy[2], measurements=xy_measurements)
-ax_xy[2].set_title('IMM - stationary')
+_, ax_xy = plt.subplots(1,2)
+viz.target_xy(target, stationary_imm, ax=ax_xy[0], measurements=xy_measurements)
+ax_xy[0].set_title('IMM - stationary')
+ax_xy[1].plot(ownship.state[1,0:150*M_radar], ownship.state[0,0:150*M_radar])
+viz.target_xy(target, ship_imm, ax=ax_xy[1], measurements=xy_measurements)
+ax_xy[1].set_title('IMM - moving')
 
-viz.target_velocity(target, navigation_dwna)
-viz.target_velocity(target, perfect_dwna)
-NEES = np.zeros_like(navigation_dwna.time)
-NEES_ct = np.zeros_like(navigation_dwna.time)
-NEES_imm = np.zeros_like(navigation_dwna.time)
+viz.target_velocity(target, stationary_imm)
+viz.target_velocity(target, ship_imm)
+NEES = np.zeros_like(radar_time)
 for k,_ in enumerate(NEES):
     true_vel = target.state_diff[0:2,k*M_radar]
-    est_vel = navigation_dwna.est_posterior[[1,3],k]
-    cov_vel = navigation_dwna.cov_posterior[[[1],[3]],[1,3],k]
+    est_vel = stationary_imm.est_posterior[[1,3],k]
+    cov_vel = stationary_imm.cov_posterior[[[1],[3]],[1,3],k]
     NEES[k] = np.dot(np.dot(true_vel-est_vel, np.linalg.inv(cov_vel)), true_vel-est_vel)
-    est_vel_ct = perfect_dwna.est_posterior[[1,3],k]
-    cov_vel_ct = perfect_dwna.cov_posterior[[[1],[3]],[1,3],k]
-    est_vel_imm = stationary_imm.est_posterior[[1,3],k]
-    cov_vel_imm = stationary_imm.cov_posterior[[[1],[3]],[1,3],k]
-    NEES_ct[k] = np.dot(np.dot(true_vel-est_vel_ct, np.linalg.inv(cov_vel_ct)), true_vel-est_vel_ct)
-    NEES_imm[k] = np.dot(np.dot(true_vel-est_vel_imm, np.linalg.inv(cov_vel_imm)), true_vel-est_vel_imm)
 UB = chi2(df=2*N_MC).ppf(0.975)*np.ones_like(NEES)/N_MC
 LB = chi2(df=2*N_MC).ppf(0.025)*np.ones_like(NEES)/N_MC
-time_vel = navigation_dwna.time
+time_vel = radar_time
 const_fig, const_ax = plt.subplots(1,1)
-[const_ax.plot(time_vel, elem) for elem in [NEES, NEES_ct, NEES_imm, UB, LB]]
+[const_ax.plot(time_vel, elem) for elem in [NEES, UB, LB]]
 rate_fig, rate_ax = plt.subplots(2,1)
-rate_ax[0].plot(stationary_ct.time, 180/np.pi*stationary_ct.est_posterior[4,:])
-rate_ax[0].plot(stationary_imm.time, 180/np.pi*stationary_imm.est_posterior[4,:])
+rate_ax[0].plot(stationary_imm.time, np.rad2deg(stationary_imm.est_posterior[4,:]))
+rate_ax[0].plot(ship_imm.time, np.rad2deg(ship_imm.est_posterior[4,:]))
 rate_ax[0].plot(target.time, np.rad2deg(target.state_diff[5,:]),label='true')
-rate_ax[1].plot(stationary_imm.time, stationary_imm.probabilites[0,:])
-rate_ax[1].plot(stationary_imm.time, stationary_imm.probabilites[1,:])
+rate_ax[1].plot(stationary_imm.time, stationary_imm.probabilites[0,:], 'g')
+rate_ax[1].plot(stationary_imm.time, stationary_imm.probabilites[1,:], 'b')
+rate_ax[1].plot(ship_imm.time, ship_imm.probabilites[0,:], 'g--')
+rate_ax[1].plot(ship_imm.time, ship_imm.probabilites[1,:], 'b--')
 plt.show()

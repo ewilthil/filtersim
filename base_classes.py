@@ -68,7 +68,7 @@ class Model:
         c_w = 0.1
         c_p = 0.5
         c_q = 0.5
-        c_r = 0.1
+        c_r = 0.4
         self.ref[self.psi, k] = ref[1]
         self.ref[self.nu,k] = np.array([ref[0], 0, -c_w*self.state[2, k-1], -c_p*self.state[self.phi, k-1], -c_q*self.state[self.theta, k-1], -c_r*(self.state[self.psi, k-1]-self.ref[self.psi,k])])
         self.noise[:,k] = self.noise_dist.rvs()

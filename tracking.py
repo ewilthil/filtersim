@@ -1,34 +1,117 @@
 import numpy as np
 from base_classes import Sensor
 from scipy.linalg import block_diag
+from scipy.stats import multivariate_normal
 from estimators import KF, EKF
 from autopy.conversion import heading_to_matrix_2D
+def polar_to_cartesian(z):
+    return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])
 class IMM:
-    def __init__(self, P_in):
+    def __init__(self, P_in, time, sigmas, state_init, cov_init, R_polar):
+        self.time = time
+        self.N = len(time)
         self.markov_probabilites = P_in
         self.r = P_in.shape[0]
-        pass
+        self.nx = state_init.shape[0]
+        self.estimates_prior = np.zeros((self.nx, 1, self.r, self.N))
+        self.covariances_prior = np.zeros((self.nx, self.nx, self.r, self.N))
+        for j in range(self.r):
+            self.estimates_prior[:,:,j,0] = state_init[:,None]
+            self.covariances_prior[:,:,j,0] = cov_init
+        self.estimates_posterior = np.zeros((self.nx, 1, self.r, self.N))
+        self.covariances_posterior = np.zeros((self.nx, self.nx, self.r, self.N))
+        self.est_posterior = np.zeros((self.nx, self.N))
+        self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
+        self.probabilites = np.zeros((self.r, self.N))
+        self.probabilites[:,0] = 1./self.r*np.ones_like(self.probabilites[:,0])
+        dwna_proc_cov = sigmas[0]
+        dwna_state_init = state_init[0:4]
+        dwna_cov_init = cov_init[0:4, 0:4]
+        self.dwna = DWNA_filter(time, sigmas[0], R_polar, dwna_state_init, dwna_cov_init)
+        self.ct = CT_filter(time, sigmas[1], R_polar, state_init, cov_init)
+        self.filter_bank = [self.dwna, self.ct]
 
     def mix(self, prev_est, prev_cov, prev_prob):
+        mu_ij = np.zeros((self.r, self.r))
+        c_j = np.zeros(self.r)
+        for j in range(self.r):
+            for i in range(self.r):
+                mu_ij[i,j] = self.markov_probabilites[i,j]*prev_prob[i]
+                c_j[j] += mu_ij[i,j]
+            mu_ij[:,j] = mu_ij[:,j]/c_j[j]
         x_out = np.zeros_like(prev_est)
         P_out = np.zeros_like(prev_cov)
-        pass
+        for j in range(self.r):
+            for i in range(self.r):
+                x_out[:,:,j] += mu_ij[i,j]*prev_est[:,:,i]
+            for i in range(self.r):
+                diff = np.squeeze(prev_est[:,:,i]-x_out[:,:,j])
+                P_out[:,:,j] += mu_ij[i,j]*(prev_cov[:,:,i]+np.dot(diff[:,None], diff[:,None].T))
+        return c_j, x_out, P_out
 
     def update_mode_probabilities(self, c_j, lambda_j):
-        pass
+        mu = np.zeros(self.r)
+        for j in range(self.r):
+            mu[j] = c_j[j]*lambda_j[j]
+        mu = mu/np.sum(mu)
+        return mu
 
-    def output_combination(self):
-        pass
+    def output_combination(self, est, cov, prob):
+        x_out = np.zeros(est.shape[0:2])
+        cov_out = np.zeros(cov.shape[0:2])
+        for j in range(self.r):
+            x_out += prob[j]*est[:,:,j]
+        for j in range(self.r):
+            diff = np.squeeze(est[:,:,j]-x_out)
+            cov_out += prob[j]*(cov[:,:,j]+np.dot(diff[:,None],diff[:,None].T))
+        return x_out, cov_out
 
-    def update_filters(self, z):
-        pass
+    def update_filters(self, z, x_mixed, cov_mixed, k):
+        x = np.zeros_like(x_mixed)
+        cov = np.zeros_like(cov_mixed)
+        likelihood = np.zeros(self.r)
+        for j in range(self.r):
+            x_temp, cov_temp = self.filter_bank[j].step(z,k)
+            if x_temp.shape[0] < 5:
+                x_temp = np.hstack((x_temp, 0))[:,None]
+                cov_temp = np.hstack((np.vstack((cov_temp, np.zeros((1,4)))), np.zeros((5,1))))
+            else:
+                x_temp = x_temp[:,None]
+            x[:,:,j] = x_temp
+            cov[:,:,j] = cov_temp
+            likelihood[j] = self.filter_bank[j].evaluate_likelihood(polar_to_cartesian(z))
+        return x, cov, likelihood
 
-    def step(self):
-        pass
+    def step(self, z, k, new_pose):
+        for j in range(self.r):
+            self.filter_bank[j].update_sensor_pose(new_pose)
+        if k == 0:
+            c_j, x_mixed, cov_mixed = self.mix(self.estimates_prior[:,:,:,0], self.covariances_prior[:,:,:,0], self.probabilites[:,0])
+        else:
+            c_j, x_mixed, cov_mixed = self.mix(self.estimates_posterior[:,:,:,k-1], self.covariances_posterior[:,:,:,k-1], self.probabilites[:,k-1])
+        x, cov, likelihood = self.update_filters(z, x_mixed, cov_mixed, k)
+        probs = self.update_mode_probabilities(c_j, likelihood)
+        x_out, cov_out = self.output_combination(x, cov, probs)
+        self.probabilites[:,k] = probs
+        self.estimates_posterior[:,:,:,k] = x
+        self.covariances_posterior[:,:,:,k] = cov
+        self.est_posterior[:,k] = np.squeeze(x_out)
+        self.cov_posterior[:,:,k] = cov_out
 
 class TrackingFilter:
-    def __init__(self, pose=np.zeros(3)):
+    def __init__(self, time, state_init, cov_init, R_polar, pose=np.zeros(3)):
         self.pose = pose
+        self.dt = time[1]-time[0]
+        self.time = time
+        self.N = len(time)
+        self.nx = len(state_init)
+        self.est_prior = np.zeros((self.nx, self.N))
+        self.est_prior[:,0] = state_init
+        self.est_posterior = np.zeros((self.nx,self.N))
+        self.cov_prior = np.zeros((self.nx,self.nx,self.N))
+        self.cov_prior[:,:,0] = cov_init
+        self.cov_posterior = np.zeros((self.nx,self.nx,self.N))
+        self.R_polar = R_polar
 
     def step(self, measurement, k):
         pos_meas, cov_meas = self.convert_measurement(measurement)
@@ -37,6 +120,7 @@ class TrackingFilter:
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
         self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)
+        return self.est_posterior[:,k], self.cov_posterior[:,:,k]
 
     def convert_measurement(self, measurement):
         r = measurement[0]
@@ -55,25 +139,18 @@ class TrackingFilter:
     def update_sensor_pose(self, pose):
         self.pose = pose
 
+    def evaluate_likelihood(self, z):
+        return multivariate_normal.pdf(z, mean=self.filter.measurement_prediction, cov=self.filter.R)
+
 class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
-        TrackingFilter.__init__(self)
-        self.dt = time[1]-time[0]
-        self.time = time
-        self.N = len(time)
-        self.est_prior = np.zeros((4, self.N))
-        self.est_prior[:,0] = state_init
-        self.est_posterior = np.zeros((4,self.N))
-        self.cov_prior = np.zeros((4,4,self.N))
-        self.cov_prior[:,:,0] = cov_init
-        self.cov_posterior = np.zeros((4,4,self.N))
+        TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         Fsub = np.array([[1, self.dt],[0, 1]])
         F = block_diag(Fsub, Fsub)
         G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
         Q = np.dot(G, np.dot(sigma_v, G.T))
         H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R = np.zeros((2,2,self.N))
-        self.R_polar = R_polar
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
     
 
@@ -104,7 +181,7 @@ def CT_markov(x, dt):
     f[1,3] = -swT
     f[2,3] = swT/w
     f[3,3] = cwT
-    f[4,4] = np.exp(-1/1)
+    f[4,4] = np.exp(-1./10)
     return np.dot(f, x)
 
 def CT_markov_jacobian(x, dt):
@@ -125,22 +202,12 @@ def CT_markov_jacobian(x, dt):
     F[1,4] = -dt*swT*v_N - dt*cwT*v_E
     F[2,4] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
     F[3,4] = dt*cwT*v_N - dt*swT*v_E
-    F[4,4] = np.exp(-1/1)
+    F[4,4] = np.exp(-1./10)
     return F
 
 class CT_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
-        TrackingFilter.__init__(self)
-        self.dt = time[1]-time[0]
-        self.time = time
-        self.N = len(time)
-        self.est_prior = np.zeros((5, self.N))
-        self.est_prior[:,0] = state_init
-        self.cov_prior = np.zeros((5, 5, self.N))
-        self.cov_prior[:,:,0] = cov_init
-        self.est_posterior = np.zeros((5, self.N))
-        self.cov_posterior = np.zeros((5, 5, self.N))
-        self.R_polar = R_polar
+        TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         self.R = np.zeros((2, 2, self.N))
         H = np.array([[1, 0, 0, 0, 0],[0, 0, 1, 0, 0]])
         G = np.array([[self.dt**2/2., 0, 0],[self.dt, 0, 0],[0,self.dt**2/2., 0],[0, self.dt, 0],[0, 0, self.dt]])

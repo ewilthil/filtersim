@@ -46,9 +46,10 @@ class KF:
         return self.est_prior, self.est_prior
 
     def step_filter(self, measurement):
-        S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
-        K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(S)))
-        self.est_posterior = self.est_prior+np.dot(K, measurement-np.dot(self.H,self.est_prior))
+        self.S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
+        K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(self.S)))
+        self.measurement_prediction = np.dot(self.H, self.est_prior)
+        self.est_posterior = self.est_prior+np.dot(K, measurement-self.measurement_prediction)
         cov = np.dot(np.identity(self.F.shape[0])-np.dot(K, self.H), self.cov_prior)
         self.cov_posterior = 0.5*(cov+cov.T)
         return self.est_posterior, self.cov_posterior
@@ -81,9 +82,10 @@ class EKF:
     
     def step_filter(self, measurement):
         H_k = self.H(self.est_prior)
-        S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
-        K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(S)))
-        self.est_posterior = self.est_prior+np.dot(K, measurement-self.h(self.est_prior))
+        self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
+        K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
+        self.measurement_prediction = self.h(self.est_prior)
+        self.est_posterior = self.est_prior+np.dot(K, measurement-self.measurement_prediction)
         cov = np.dot(np.identity(self.F(self.est_prior).shape[0])-np.dot(K, H_k), self.cov_prior)
         self.cov_posterior = 0.5*(cov+cov.T)
         return self.est_posterior, self.cov_posterior

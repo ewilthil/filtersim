@@ -186,16 +186,16 @@ class DWNA_filter(TrackingFilter):
 def state_elements(state, dt):
     v_N = state[1]
     v_E = state[3]
-    w_threshold = 0.1*np.pi/180
+    w_threshold = np.deg2rad(0.01)
     if np.abs(state[4]) > w_threshold:
         w = state[4]
     else:
-        w = w_threshold
+        w = np.sign(w)*w_threshold
     wT = w*dt
     swT = np.sin(wT)
     cwT = np.cos(wT)
     return v_N, v_E, w, wT, swT, cwT
-    # Go over each column and fill in
+
 def CT_markov(x, dt):
     _, _, w, _, swT, cwT = state_elements(x, dt)
     f = np.zeros((5,5))

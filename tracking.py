@@ -8,29 +8,31 @@ from autopy.conversion import heading_to_matrix_2D
 def polar_to_cartesian(z):
     return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])
 class IMM:
-    def __init__(self, P_in, time, sigmas, state_init, cov_init, R_polar):
+    def __init__(self, P_in, time, sigmas, state_init, cov_init, prob_init, R_polar, model_names):
         self.time = time
         self.N = len(time)
         self.markov_probabilites = P_in
         self.r = P_in.shape[0]
-        self.nx = state_init.shape[0]
+        self.nx = 5#np.max([state_init[j].shape[0] for j in range(self.r)])
         self.estimates_prior = np.zeros((self.nx, 1, self.r, self.N))
         self.covariances_prior = np.zeros((self.nx, self.nx, self.r, self.N))
         for j in range(self.r):
-            self.estimates_prior[:,:,j,0] = state_init[:,None]
-            self.covariances_prior[:,:,j,0] = cov_init
+            self.estimates_prior[:state_init[j].shape[0],:,j,0] = state_init[j][:,None]
+            self.covariances_prior[:state_init[j].shape[0],:state_init[j].shape[0],j,0] = cov_init[j]
         self.estimates_posterior = np.zeros((self.nx, 1, self.r, self.N))
         self.covariances_posterior = np.zeros((self.nx, self.nx, self.r, self.N))
         self.est_posterior = np.zeros((self.nx, self.N))
         self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
         self.probabilites = np.zeros((self.r, self.N))
-        self.probabilites[:,0] = 1./self.r*np.ones_like(self.probabilites[:,0])
-        dwna_proc_cov = sigmas[0]
-        dwna_state_init = state_init[0:4]
-        dwna_cov_init = cov_init[0:4, 0:4]
-        self.dwna = DWNA_filter(time, sigmas[0], R_polar, dwna_state_init, dwna_cov_init)
-        self.ct = CT_filter(time, sigmas[1], R_polar, state_init, cov_init)
-        self.filter_bank = [self.dwna, self.ct]
+        self.probabilites[:,0] = prob_init
+        self.filter_bank = []
+        for j in range(self.r):
+            proc_cov = sigmas[j]
+            x0 = state_init[j]
+            cov0 = cov_init[j]
+            current_class = model_dict[model_names[j]]
+            current_filt = current_class(time, proc_cov, R_polar, x0, cov0)
+            self.filter_bank.append(current_filt)
 
     def mix(self, prev_est, prev_cov, prev_prob):
         mu_ij = np.zeros((self.r, self.r))
@@ -73,19 +75,19 @@ class IMM:
         likelihood = np.zeros(self.r)
         for j in range(self.r):
             x_temp, cov_temp = self.filter_bank[j].step(z,k)
-            if x_temp.shape[0] < 5:
-                x_temp = np.hstack((x_temp, 0))[:,None]
-                cov_temp = np.hstack((np.vstack((cov_temp, np.zeros((1,4)))), np.zeros((5,1))))
+            if x_temp.shape[0] == 5:
+                x[:,:,j] = x_temp[:,None]
+                cov[:,:,j] = cov_temp
             else:
-                x_temp = x_temp[:,None]
-            x[:,:,j] = x_temp
-            cov[:,:,j] = cov_temp
+                x[:4,:,j] = x_temp[:,None]
+                x[4,:,j] = self.filter_bank[j].omega
+                cov[:4,:4,j] = cov_temp
             likelihood[j] = self.filter_bank[j].evaluate_likelihood(k)
         return x, cov, likelihood
 
-    def step(self, z, k, new_pose):
+    def step(self, z, k, new_pose, new_cov):
         for j in range(self.r):
-            self.filter_bank[j].update_sensor_pose(new_pose)
+            self.filter_bank[j].update_sensor_pose(new_pose, new_cov)
         if k == 0:
             c_j, x_mixed, cov_mixed = self.mix(self.estimates_prior[:,:,:,0], self.covariances_prior[:,:,:,0], self.probabilites[:,0])
         else:
@@ -159,8 +161,9 @@ class TrackingFilter:
         return pos_global, cov_global
 
 
-    def update_sensor_pose(self, pose):
+    def update_sensor_pose(self, pose, R_polar):
         self.pose = pose
+        self.R_polar = R_polar
 
     def evaluate_likelihood(self, k):
         diff = self.filter.measurement-self.filter.measurement_prediction
@@ -169,6 +172,7 @@ class TrackingFilter:
 class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
+        self.omega = 0
         Fsub = np.array([[1, self.dt],[0, 1]])
         F = block_diag(Fsub, Fsub)
         G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
@@ -239,8 +243,9 @@ class CT_filter(TrackingFilter):
         self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), Q, np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
 
 class CT_known(TrackingFilter):
-    def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega):
+    def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega=np.deg2rad(-1.5)):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
+        self.omega = omega
         F = self.construct_F(omega)
         G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
         Q = np.dot(G, np.dot(sigma_v, G.T))
@@ -249,7 +254,8 @@ class CT_known(TrackingFilter):
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
 
     def construct_F(self, w):
-        wT = omega.self.dt
+        wT = w*self.dt
         swT = np.sin(wT)
-        cwT = np.sin(wT)
-        return np.array([[1, swT/w, 0, -(1-cwT)/w],[0, cwT, 0, -swT],[0, (1-cwT)/w, 1, swT/w],[0, swT, 0, cwT]])
+        cwT = np.cos(wT)
+        return np.array([[1, swT/w, 0, -(1.-cwT)/w],[0, cwT, 0, -swT],[0, (1.-cwT)/w, 1, swT/w],[0, swT, 0, cwT]])
+model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

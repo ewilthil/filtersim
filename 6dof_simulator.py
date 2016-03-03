@@ -51,13 +51,20 @@ for n_mc in range(N_MC):
     ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 
     track_init_pos = np.hstack((np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]],0))
-    track_init_cov = np.diag((20**2, 5**2, 20**2, 5**2, (1*np.pi/180)**2))
-    pi_imm = np.array([[0.8, 0.2],[0.1, 0.9]])
-    sigma_dwna = np.diag((0.8**2, 0.8**2))
-    sigma_ct = np.diag((0.1**2, 0.1**2, (0.1*np.pi/180)**2))
+    track_init_cov = np.diag((25**2, 4**2, 25**2, 4**2, (1*np.pi/180)**2))
+    pi_imm = np.array([[0.9, 0.1],[0.1, 0.9]])
+    sigma_ct_u = np.diag((0.1**2, 0.1**2, (1*np.pi/180)**2))
+    imm_init_pos = (track_init_pos[0:4], track_init_pos[0:4])
+    imm_init_cov = (track_init_cov[0:4, 0:4], track_init_cov[0:4,0:4])
+    sigma_dwna = np.diag((3**2, 3**2))
+    sigma_ct = np.diag((0.07**2, 0.07**2))
     sigmas = (sigma_dwna, sigma_ct)
-    perfect_pose_imm = track.IMM(pi_imm, radar_time, sigmas, track_init_pos, track_init_cov, cov_radar)
-    navigation_imm = track.IMM(pi_imm, radar_time, sigmas, track_init_pos, track_init_cov, cov_radar)
+    names = ('DWNA', 'CT_known')
+    names_2 = ('DWNA', 'CT_unknown')
+    prob_init = np.array([1, 0])
+    perfect_pose_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names)
+    perfect_pose_unknown_ct = track.IMM(pi_imm, radar_time, (sigma_dwna, sigma_ct_u), (track_init_pos[:4], track_init_pos), (track_init_cov[:4,:4], track_init_cov), prob_init, cov_radar, names_2)
+    navigation_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names)
 
     # Main loop
     print str(datetime.datetime.now())
@@ -77,14 +84,16 @@ for n_mc in range(N_MC):
             nav_eul = quaternion_to_euler_angles(nav_quat)
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             perfect_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
-            perfect_pose_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose)
-            navigation_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose)
+            perfect_pose_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose, cov_radar)
+            perfect_pose_unknown_ct.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose, cov_radar)
+            cov_heading = np.array([[0, 0],[0, navsys.EKF.cov_posterior[2,2,k_gps]]])
+            navigation_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose, cov_radar+cov_heading)
             # Evaluate error stuff
-            true_track_state = np.hstack((target.state[0,k],target.state_diff[0,k], target.state[1,k], target.state_diff[1,k], target.state_diff[5,k]))
-            nav_error = true_track_state-navigation_imm.est_posterior[:,k_radar]
-            nav_cov = navigation_imm.cov_posterior[:,:,k_radar]
-            perf_error = true_track_state-perfect_pose_imm.est_posterior[:,k_radar]
-            perf_cov = perfect_pose_imm.cov_posterior[:,:,k_radar]
+            true_track_state = np.hstack((target.state[0,k],target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
+            nav_error = true_track_state-navigation_imm.est_posterior[:4,k_radar]
+            nav_cov = navigation_imm.cov_posterior[:4,:4,k_radar]
+            perf_error = true_track_state-perfect_pose_imm.est_posterior[:4,k_radar]
+            perf_cov = perfect_pose_imm.cov_posterior[:4,:4,k_radar]
             NEES_nav[n_mc, k_radar] = np.dot(nav_error, np.dot(np.linalg.inv(nav_cov), nav_error))
             NEES_perf[n_mc, k_radar] = np.dot(perf_error, np.dot(np.linalg.inv(perf_cov), perf_error))
             RMSE_perf[n_mc, k_radar] = perf_error[0]**2+perf_error[2]**2
@@ -124,8 +133,12 @@ RMS_ax.plot(radar_time, np.sqrt(np.mean(RMSE_perf, axis=0)), label='perfect pose
 RMS_ax.legend()
 RMS_ax.set_title('Position RMS error for ' + str(N_MC) + ' monte carlo runs')
 
+omega_est = np.zeros(len(radar_time))
+for k, t in enumerate(radar_time):
+    omega_est[k] = perfect_pose_imm.probabilites[1,k]*np.deg2rad(-1.5)
 rate_fig, rate_ax = plt.subplots(3,1)
 rate_ax[0].plot(navigation_imm.time, np.rad2deg(navigation_imm.est_posterior[4,:]))
+rate_ax[0].plot(navigation_imm.time, np.rad2deg(perfect_pose_unknown_ct.est_posterior[4,:]))
 rate_ax[0].plot(perfect_pose_imm.time, np.rad2deg(perfect_pose_imm.est_posterior[4,:]))
 rate_ax[0].plot(target.time, np.rad2deg(target.state_diff[5,:]),label='true')
 rate_ax[1].plot(navigation_imm.time, navigation_imm.probabilites[0,:], 'g')

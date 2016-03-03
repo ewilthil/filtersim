@@ -8,7 +8,7 @@ from autopy.conversion import heading_to_matrix_2D
 def polar_to_cartesian(z):
     return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])
 class IMM:
-    def __init__(self, P_in, time, sigmas, state_init, cov_init, prob_init, R_polar, model_names):
+    def __init__(self, P_in, time, sigmas, state_init, cov_init, prob_init, R_polar, model_names, extra_args):
         self.time = time
         self.N = len(time)
         self.markov_probabilites = P_in
@@ -31,7 +31,7 @@ class IMM:
             x0 = state_init[j]
             cov0 = cov_init[j]
             current_class = model_dict[model_names[j]]
-            current_filt = current_class(time, proc_cov, R_polar, x0, cov0)
+            current_filt = current_class(time, proc_cov, R_polar, x0, cov0, **extra_args[j])
             self.filter_bank.append(current_filt)
 
     def mix(self, prev_est, prev_cov, prev_prob):
@@ -243,7 +243,7 @@ class CT_filter(TrackingFilter):
         self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), Q, np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
 
 class CT_known(TrackingFilter):
-    def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega=np.deg2rad(-1.5)):
+    def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         self.omega = omega
         F = self.construct_F(omega)

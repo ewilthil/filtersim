@@ -59,12 +59,14 @@ for n_mc in range(N_MC):
     sigma_dwna = np.diag((3**2, 3**2))
     sigma_ct = np.diag((0.07**2, 0.07**2))
     sigmas = (sigma_dwna, sigma_ct)
+    extra_args = ({}, {})
     names = ('DWNA', 'CT_known')
     names_2 = ('DWNA', 'CT_unknown')
+    extra_args_2 = ({}, {'omega' : np.deg2rad(-1.5)})
     prob_init = np.array([1, 0])
-    perfect_pose_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names)
-    perfect_pose_unknown_ct = track.IMM(pi_imm, radar_time, (sigma_dwna, sigma_ct_u), (track_init_pos[:4], track_init_pos), (track_init_cov[:4,:4], track_init_cov), prob_init, cov_radar, names_2)
-    navigation_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names)
+    perfect_pose_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names, extra_args_2)
+    perfect_pose_unknown_ct = track.IMM(pi_imm, radar_time, (sigma_dwna, sigma_ct_u), (track_init_pos[:4], track_init_pos), (track_init_cov[:4,:4], track_init_cov), prob_init, cov_radar, names_2, extra_args)
+    navigation_imm = track.IMM(pi_imm, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names, extra_args_2)
 
     # Main loop
     print str(datetime.datetime.now())

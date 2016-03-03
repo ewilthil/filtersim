@@ -190,7 +190,7 @@ def state_elements(state, dt):
     if np.abs(state[4]) > w_threshold:
         w = state[4]
     else:
-        w = np.sign(state[4])*w_threshold
+        w = w_threshold
     wT = w*dt
     swT = np.sin(wT)
     cwT = np.cos(wT)

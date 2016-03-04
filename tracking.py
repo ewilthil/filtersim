@@ -11,7 +11,7 @@ class IMM:
     def __init__(self, P_in, time, sigmas, state_init, cov_init, prob_init, R_polar, model_names, extra_args):
         self.time = time
         self.N = len(time)
-        self.markov_probabilites = P_in
+        self.markov_probabilities = P_in
         self.r = P_in.shape[0]
         self.nx = 5#np.max([state_init[j].shape[0] for j in range(self.r)])
         self.estimates_prior = np.zeros((self.nx, 1, self.r, self.N))
@@ -23,8 +23,8 @@ class IMM:
         self.covariances_posterior = np.zeros((self.nx, self.nx, self.r, self.N))
         self.est_posterior = np.zeros((self.nx, self.N))
         self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
-        self.probabilites = np.zeros((self.r, self.N))
-        self.probabilites[:,0] = prob_init
+        self.probabilities = np.zeros((self.r, self.N))
+        self.probabilities[:,0] = prob_init
         self.likelihoods = np.zeros((self.r, self.N)) # Likelihood of 
         self.filter_bank = []
         for j in range(self.r):
@@ -40,7 +40,7 @@ class IMM:
         c_j = np.zeros(self.r)
         for j in range(self.r):
             for i in range(self.r):
-                mu_ij[i,j] = self.markov_probabilites[i,j]*prev_prob[i]
+                mu_ij[i,j] = self.markov_probabilities[i,j]*prev_prob[i]
                 c_j[j] += mu_ij[i,j]
             mu_ij[:,j] = mu_ij[:,j]/c_j[j]
         x_out = np.zeros_like(prev_est)
@@ -91,13 +91,13 @@ class IMM:
         for j in range(self.r):
             self.filter_bank[j].update_sensor_pose(new_pose, new_cov)
         if k == 0:
-            c_j, x_mixed, cov_mixed = self.mix(self.estimates_prior[:,:,:,0], self.covariances_prior[:,:,:,0], self.probabilites[:,0])
+            c_j, x_mixed, cov_mixed = self.mix(self.estimates_prior[:,:,:,0], self.covariances_prior[:,:,:,0], self.probabilities[:,0])
         else:
-            c_j, x_mixed, cov_mixed = self.mix(self.estimates_posterior[:,:,:,k-1], self.covariances_posterior[:,:,:,k-1], self.probabilites[:,k-1])
+            c_j, x_mixed, cov_mixed = self.mix(self.estimates_posterior[:,:,:,k-1], self.covariances_posterior[:,:,:,k-1], self.probabilities[:,k-1])
         x, cov, likelihood = self.update_filters(z, x_mixed, cov_mixed, k)
         probs = self.update_mode_probabilities(c_j, likelihood)
         x_out, cov_out = self.output_combination(x, cov, probs)
-        self.probabilites[:,k] = probs
+        self.probabilities[:,k] = probs
         self.estimates_posterior[:,:,:,k] = x
         self.covariances_posterior[:,:,:,k] = cov
         self.est_posterior[:,k] = np.squeeze(x_out)

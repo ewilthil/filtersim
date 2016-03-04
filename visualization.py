@@ -111,31 +111,66 @@ def plot_xy_trajectory(ax, xdata, ydata, linestyle=None):
         ax.plot(xdata, ydata, linestyle)
 
 # Target tracking
-def target_xy(target, est, ax=None, measurements=None):
-    if ax is None:
-        fig, ax = plt.subplots(1,1)
-    else:
-        fig = ax.get_figure()
-    if measurements is not None:
-        ax.plot(measurements[1,:], measurements[0,:], 'k.', alpha=0.4)
-    ax.plot(target.state[1,:], target.state[0,:], 'k', label='True state')
-    ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], 'b', label='Posterior estimates')
+def target_xy(target, est, ax, args):
+    ax.plot(target.state[1,:], target.state[0,:], **args)
+    ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], **args)
     cov = est.cov_posterior[[[2],[0]],[2,0],:] # pick out E and N elements
     inds = np.arange(0, len(est.time)+1, len(est.time)/15)
     for k in inds:
         el = get_ellipse(est.est_posterior[[2,0],k], cov[:,:,k], gamma=6)
-        el.set_color('b')
+        el.set_color(args['color'])
         ax.add_artist(el)
     ax.set_aspect('equal')
-    return fig, ax
 
-def target_velocity(target, est):
-    fig, ax = plt.subplots(2,1)
+def target_velocity(target, est, ax, args):
     ax[0].plot(target.time, target.state_diff[0,:], 'k', label='True state')
-    ax[0].errorbar(est.time, est.est_posterior[1,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[1,1,:])), errorevery=len(est.time)/30, color='b')
+    ax[0].errorbar(est.time, est.est_posterior[1,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[1,1,:])), errorevery=len(est.time)/30, **args)
     ax[0].set_title('North velocity')
     ax[1].plot(target.time, target.state_diff[1,:], 'k', label='True state')
-    ax[1].errorbar(est.time, est.est_posterior[3,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[3,3,:])), errorevery=len(est.time)/30, color='b')
+    ax[1].errorbar(est.time, est.est_posterior[3,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[3,3,:])), errorevery=len(est.time)/30, **args)
     ax[1].set_title('East velocity')
-    return fig, ax
 
+
+def target_angular_rate(target, imm, ax, args):
+    ax.plot(target.time, np.rad2deg(target.state_diff[5,:]), 'k', label='True state')
+    ax.plot(imm.time, np.rad2deg(imm.est_posterior[4,:]), **args)
+    ax.set_title('Angular rate')
+
+def DWNA_probability(imm, ax, args):
+    ax.plot(imm.time, imm.probabilities[0,:], **args)
+    ax.set_title('Probability of constant velocity')
+
+def animate_likelihood(model1, model2):
+    def update_mean_cov(num, model1, model2, ax, clr=False):
+        if clr:
+            ax.clear()
+        ax.set_xlim(-10, 10)
+        ax.set_ylim(-10, 10)
+        mean = model1.measurement_innovation[:,num]
+        cov = model1.measurement_innovation_covariance[:,:,num]
+        el = get_ellipse(np.zeros(2), cov, gamma=9, alpha =0.1)
+        el.set_color('r')
+        el.set_edgecolor('k')
+        ax.add_artist(el)
+        ax.plot(mean[0], mean[1], 'rx', markersize=10)
+        if num >= 1:
+            running_mean = np.mean(model1.measurement_innovation[:,max(num-15,0):num], axis=1)
+            ax.plot(running_mean[0], running_mean[1], 'ro', markersize=10)
+        mean = model2.measurement_innovation[:,num]
+        cov = model2.measurement_innovation_covariance[:,:,num]
+        el = get_ellipse(np.zeros(2), cov, gamma=9, alpha =0.1)
+        el.set_color('b')
+        el.set_edgecolor('k')
+        ax.add_artist(el)
+        ax.plot(mean[0], mean[1], 'bx', markersize=10)
+        if num >= 1:
+            running_mean = np.mean(model2.measurement_innovation[:,max(num-15,0):num], axis=1)
+            ax.plot(running_mean[0], running_mean[1], 'bo', markersize=10)
+        ax.set_title('k='+str(num))
+
+    fig1 = plt.figure()
+    plt.xlabel('x')
+    plt.xlim(-10, 10)
+    plt.ylim(-10, 10)
+    plt.title('likelihoods')
+    line_ani = animation.FuncAnimation(fig1, update_mean_cov, len(model1.time), interval=100, blit=False, fargs=(model1, model2, fig1.get_axes()[0], True))

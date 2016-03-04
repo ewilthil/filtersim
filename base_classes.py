@@ -3,6 +3,7 @@ from scipy.stats import multivariate_normal
 from autopy.conversion import euler_angles_to_matrix
 from scipy.linalg import block_diag
 from scipy.integrate import odeint
+from scipy.stats import chi2
 
 class Sensor:
     def __init__(self, h, bias, noise_cov, time_vec):
@@ -81,3 +82,29 @@ class Model:
     def NED_vel(self, k):
         R = euler_angles_to_matrix(self.state[self.eul,k])
         return np.dot(R, self.state[self.nu[0:3],k])
+
+class ErrorStats:
+    def __init__(self, time, N_mc, plot_args):
+        self.time = time
+        self.dt = time[1]-time[0]
+        self.N = len(time)
+        self.N_mc = N_mc
+        self.NEES = np.zeros((N_mc, self.N))
+        self.RMSE_pos = np.zeros((N_mc, self.N))
+        self.RMSE_vel = np.zeros((N_mc, self.N))
+        self.plot_args = plot_args
+
+    def update_vals(self, true_state, est_state, cov, n, n_mc):
+            diff_state = true_state-est_state
+            self.NEES[n_mc, n] = np.dot(diff_state, np.dot(np.linalg.inv(cov), diff_state))
+            self.RMSE_pos[n_mc, n] = diff_state[0]**2+diff_state[2]**2
+            self.RMSE_vel[n_mc, n] = diff_state[1]**2+diff_state[3]**2
+
+    def plot_errors(self, NEES_ax, RMSE_pos_ax, RMSE_vel_ax):
+        UB = chi2(df=2*self.N_mc).ppf(0.975)/self.N_mc*np.ones_like(self.time)
+        LB = chi2(df=2*self.N_mc).ppf(0.025)/self.N_mc*np.ones_like(self.time)
+        NEES_ax.plot(self.time, np.mean(self.NEES, axis=0), **self.plot_args)
+        NEES_ax.plot(self.time, UB, 'k')
+        NEES_ax.plot(self.time, LB, 'k')
+        RMSE_pos_ax.plot(self.time, np.sqrt(np.mean(self.RMSE_pos, axis=0)), **self.plot_args)
+        RMSE_vel_ax.plot(self.time, np.sqrt(np.mean(self.RMSE_vel, axis=0)), **self.plot_args)

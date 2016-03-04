@@ -25,6 +25,7 @@ class IMM:
         self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
         self.probabilites = np.zeros((self.r, self.N))
         self.probabilites[:,0] = prob_init
+        self.likelihoods = np.zeros((self.r, self.N)) # Likelihood of 
         self.filter_bank = []
         for j in range(self.r):
             proc_cov = sigmas[j]
@@ -83,6 +84,7 @@ class IMM:
                 x[4,:,j] = self.filter_bank[j].omega
                 cov[:4,:4,j] = cov_temp
             likelihood[j] = self.filter_bank[j].evaluate_likelihood(k)
+        self.likelihoods[:,k] = likelihood
         return x, cov, likelihood
 
     def step(self, z, k, new_pose, new_cov):
@@ -186,11 +188,13 @@ class DWNA_filter(TrackingFilter):
 def state_elements(state, dt):
     v_N = state[1]
     v_E = state[3]
-    w_threshold = np.deg2rad(0.01)
-    if np.abs(state[4]) > w_threshold:
-        w = state[4]
-    else:
+    w_threshold = np.deg2rad(0.05)
+    if state[4] == 0:
         w = w_threshold
+    elif np.abs(state[4]) < w_threshold:
+        w = np.sign(state[4])*w_threshold
+    else:
+        w = state[4]
     wT = w*dt
     swT = np.sin(wT)
     cwT = np.cos(wT)

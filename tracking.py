@@ -117,6 +117,8 @@ class TrackingFilter:
         self.cov_prior[:,:,0] = cov_init
         self.cov_posterior = np.zeros((self.nx,self.nx,self.N))
         self.R_polar = R_polar
+        self.measurement_innovation = np.zeros((2, self.N))
+        self.measurement_innovation_covariance = np.zeros((2,2,self.N))
 
     def step(self, measurement, k):
         pos_meas, cov_meas = self.convert_measurement(measurement)
@@ -169,7 +171,33 @@ class TrackingFilter:
 
     def evaluate_likelihood(self, k):
         diff = self.filter.measurement-self.filter.measurement_prediction
+        self.measurement_innovation[:,k] = diff
+        self.measurement_innovation_covariance[:,:,k] = self.filter.S
         return multivariate_normal.pdf(diff, mean=np.zeros_like(diff), cov=self.filter.S)
+
+    def ct_process_covar(self, x_target):
+        _, _, w, wT, swT, cwT = state_elements(x_target, self.dt)
+        Q_pos_vel = np.zeros((4,4))
+        Q_pos_vel[0, 0] = 2*(wT - swT)/(w**3)
+        Q_pos_vel[0, 1] = (1 - cwT)/(w**2)
+        Q_pos_vel[0, 3] = (wT - swT)/(w**2)
+
+        Q_pos_vel[1, 0] = Q_pos_vel[0, 1]
+        Q_pos_vel[1, 1] = self.dt
+        Q_pos_vel[1, 2] = -(wT-swT)/(w**2)
+
+        Q_pos_vel[2, 1] = Q_pos_vel[1, 2]
+        Q_pos_vel[2, 2] = Q_pos_vel[0, 0]
+        Q_pos_vel[2, 3] = Q_pos_vel[0, 1]
+
+        Q_pos_vel[3, 0] = Q_pos_vel[0, 3]
+        Q_pos_vel[3, 2] = Q_pos_vel[2, 3]
+        Q_pos_vel[3, 3] = self.dt
+        Q_pos_vel *= self.cov_a
+
+        Q_w = self.cov_w*self.dt
+        Q = block_diag(Q_pos_vel, Q_w)
+        return Q
 
 class DWNA_filter(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
@@ -177,8 +205,7 @@ class DWNA_filter(TrackingFilter):
         self.omega = 0
         Fsub = np.array([[1, self.dt],[0, 1]])
         F = block_diag(Fsub, Fsub)
-        G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
-        Q = np.dot(G, np.dot(sigma_v, G.T))
+        Q = sigma_v
         H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R = np.zeros((2,2,self.N))
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
@@ -199,6 +226,9 @@ def state_elements(state, dt):
     swT = np.sin(wT)
     cwT = np.cos(wT)
     return v_N, v_E, w, wT, swT, cwT
+
+
+
 
 def CT_markov(x, dt):
     _, _, w, _, swT, cwT = state_elements(x, dt)
@@ -242,17 +272,19 @@ class CT_filter(TrackingFilter):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         self.R = np.zeros((2, 2, self.N))
         H = np.array([[1, 0, 0, 0, 0],[0, 0, 1, 0, 0]])
-        G = np.array([[self.dt**2/2., 0, 0],[self.dt, 0, 0],[0,self.dt**2/2., 0],[0, self.dt, 0],[0, 0, self.dt]])
-        Q = np.dot(G, np.dot(sigma_v, G.T))
-        self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), Q, np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
+        self.cov_a = sigma_v[0,0]
+        self.cov_w = sigma_v[1,1]
+        self.filter = EKF(lambda x : CT_markov(x,self.dt), lambda x: np.dot(H,x), lambda x : self.ct_process_covar(x), np.zeros((2,2)), state_init, cov_init, lambda x : CT_markov_jacobian(x,self.dt), lambda x : H)
+
 
 class CT_known(TrackingFilter):
     def __init__(self, time, sigma_v, R_polar, state_init, cov_init, omega):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         self.omega = omega
         F = self.construct_F(omega)
-        G = np.array([[self.dt**2/2., 0],[self.dt, 0],[0,self.dt**2/2.],[0, self.dt]])
-        Q = np.dot(G, np.dot(sigma_v, G.T))
+        self.cov_a = sigma_v[0,0]
+        self.cov_w = 0
+        Q = self.ct_process_covar(np.hstack((state_init, omega)))[:4,:4]
         H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R = np.zeros((2,2,self.N))
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
@@ -262,4 +294,5 @@ class CT_known(TrackingFilter):
         swT = np.sin(wT)
         cwT = np.cos(wT)
         return np.array([[1, swT/w, 0, -(1.-cwT)/w],[0, cwT, 0, -swT],[0, (1.-cwT)/w, 1, swT/w],[0, swT, 0, cwT]])
+
 model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

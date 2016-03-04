@@ -18,9 +18,10 @@ target_init[1] = 1600
 target_init[6] = target_velocity
 target_init[5] = initial_target_heading
 maneuver_start = 150
-maneuver_duration = 30
+maneuver_duration = 150
 maneuver_end = maneuver_start+maneuver_duration
 turn_func = lambda t : initial_target_heading+(final_target_heading-initial_target_heading)/maneuver_duration*(t-maneuver_start)
+turn_func = lambda t : initial_target_heading+np.deg2rad(-1.5)*(t-maneuver_start)
 heading_ref = np.piecewise(time, [time < maneuver_start, time > maneuver_end], [initial_target_heading, final_target_heading, turn_func])
 
 ownship_heading = 0
@@ -32,7 +33,7 @@ ownship = Model(D, T, Q, ownship_init, time)
 target_ref = np.zeros((2,len(time)))
 for k, t in enumerate(time):
     # Set reference
-    if t < 10:
+    if t < 150:
         target_ref[:,k] = np.array([target_velocity, initial_target_heading])
     else:
         target_ref[:,k] = np.array([target_velocity, final_target_heading])

@@ -27,7 +27,7 @@ class NavigationSystem:
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
         self.IMU = Sensor(imu_measurement, np.zeros(6), 1e-8*np.identity(6), imu_time)
-        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), 1e-2*np.identity(4)), gps_time)
+        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((np.pi/180)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((15,15))
         cov_init[0:3,0:3] = (1*np.pi/180)**2*np.identity(3)

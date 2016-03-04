@@ -78,7 +78,8 @@ class EKF:
     def step_markov(self):
         self.est_prior = self.f(self.est_posterior)
         F_k = self.F(self.est_posterior)
-        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+self.Q
+        Q_k = self.Q(self.est_posterior)
+        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+Q_k
         return self.est_prior, self.cov_prior
     
     def step_filter(self, measurement):

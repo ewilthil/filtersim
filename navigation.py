@@ -60,15 +60,14 @@ class NavigationSystem:
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):
         C = quat_to_rot(quat_est)
         F = np.zeros((15,15))
-        F[0:3,0:3] = -sksym(omega_est)
-        F[0:3,12:15] = -np.identity(3)
-        F[3:6,0:3] = -np.dot(C, sksym(spec_force_est))
+        F[0:3,12:15] = -C
+        F[3:6,0:3] = -sksym(np.dot(C, spec_force_est))
         F[3:6,9:12] = -C
         F[6:9,3:6] = np.identity(3)
         Phi = expm(F)
         H = np.zeros((7,15))
         H[0:3,6:9] = np.identity(3)
-        H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
+        H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)-sksym(quat_est[0:3]),-quat_est[0:3]))
         Q = self.EKF.dt*np.dot(Phi,np.dot(self.Q_cont,Phi.T))
         return Phi, H, Q
 
@@ -79,7 +78,7 @@ class NavigationSystem:
     def transform_covariance(self, k):
         err_ang = self.EKF.est_posterior[0:3,k]
         err_cov = self.EKF.cov_posterior[:,:,k]
-        G_ang = np.identity(3)-sksym(0.5*err_ang)
+        G_ang = np.identity(3)+sksym(0.5*err_ang)
         G = block_diag(G_ang, np.identity(12))
         self.EKF.cov_posterior[:,:,k] = np.dot(G,np.dot(err_cov,G.T))
 
@@ -140,6 +139,6 @@ class Strapdown:
     def correct_estimates(self, delta_ang, delta_vel, delta_pos, k):
         delta_quat = np.hstack((delta_ang/2,1))
         delta_quat = delta_quat/np.linalg.norm(delta_quat)
-        self.data[self.orient,k] = quat_mul(self.data[self.orient,k],delta_quat)
+        self.data[self.orient,k] = quat_mul(delta_quat,self.data[self.orient,k])
         self.data[self.vel,k] = self.data[self.vel,k]+delta_vel
         self.data[self.pos,k] = self.data[self.pos,k]+delta_pos

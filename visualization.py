@@ -4,7 +4,7 @@ from tf.transformations import euler_matrix
 from autopy.conversion import euler_angles_to_quaternion, quaternion_to_euler_angles
 from scipy.stats import multivariate_normal
 from autopy.plotting import get_ellipse
-
+import ipdb
 def euler_to_matrix(ang):
         phi, theta, psi = ang[0], ang[1], ang[2]
         R = euler_matrix(psi, theta, phi, 'rzyx')
@@ -19,9 +19,10 @@ def plot_angle_error(ship, navsys, ax=None):
     true_eul = ship.state[3:6,:]
     est_quat = navsys.strapdown.data[navsys.strapdown.orient, :]
     est_eul = quaternion_to_euler_angles(est_quat.T).T
-    ax[0].plot(time, 180/np.pi*true_eul[0,:], 'k', time, 180/np.pi*est_eul[0,:])
-    ax[1].plot(time, 180/np.pi*true_eul[1,:], 'k', time, 180/np.pi*est_eul[1,:])
-    ax[2].plot(time, 180/np.pi*true_eul[2,:], 'k', time, 180/np.pi*est_eul[2,:])
+    meas_eul = quaternion_to_euler_angles(navsys.GPS.data[3:,:].T).T
+    ax[0].plot(time, np.rad2deg(true_eul[0,:]), 'k', time, np.rad2deg(est_eul[0,:]), navsys.GPS.time, np.rad2deg(meas_eul[0,:]))
+    ax[1].plot(time, np.rad2deg(true_eul[1,:]), 'k', time, np.rad2deg(est_eul[1,:]), navsys.GPS.time, np.rad2deg(meas_eul[1,:]))
+    ax[2].plot(time, np.rad2deg(true_eul[2,:]), 'k', time, np.rad2deg(est_eul[2,:]), navsys.GPS.time, np.rad2deg(meas_eul[2,:]))
 def plot_pos_err(ship, navsys, ax=None):
     if ax == None:
         fig, ax = plt.subplots(3,1)
@@ -98,21 +99,16 @@ def box_plot_vel(err, cov):
     plt.boxplot([rel_err, rel_gauss],whis=[0,95],labels=['filter results', 'gauss'])
     plt.title('Velocity consistency analysis')
 
-def plot_xy_pos(targets):
-    fig, ax = plt.subplots(1,1)
+def plot_xy_pos(targets, ax, arg):
     for t in targets:
-        plot_xy_trajectory(ax, t.state[1,:], t.state[0,:])
-    return fig, ax
+        plot_xy_trajectory(ax, t.state[1,:], t.state[0,:], arg)
 
-def plot_xy_trajectory(ax, xdata, ydata, linestyle=None):
-    if linestyle==None:
-        ax.plot(xdata, ydata)
-    else:
-        ax.plot(xdata, ydata, linestyle)
+def plot_xy_trajectory(ax, xdata, ydata, args):
+    ax.plot(xdata, ydata, **args)
 
 # Target tracking
 def target_xy(target, est, ax, args):
-    ax.plot(target.state[1,:], target.state[0,:], **args)
+    ax.plot(target.state[1,:], target.state[0,:], 'k')
     ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], **args)
     cov = est.cov_posterior[[[2],[0]],[2,0],:] # pick out E and N elements
     inds = np.arange(0, len(est.time)+1, len(est.time)/15)
@@ -139,6 +135,11 @@ def target_angular_rate(target, imm, ax, args):
 def DWNA_probability(imm, ax, args):
     ax.plot(imm.time, imm.probabilities[0,:], **args)
     ax.set_title('Probability of constant velocity')
+
+def likelihoods(imm, ax, args):
+    local_args = ({'color' : 'k', 'label' : 'DWNA'}, {'color' : 'b', 'label' : '-CT'},{'color' : 'r', 'label' : 'CT'})
+    [ax.plot(imm.time, imm.likelihoods[j,:], **local_args[j]) for j in range(3)]
+    ax.set_title(args['label'])
 
 def animate_likelihood(model1, model2):
     def update_mean_cov(num, model1, model2, ax, clr=False):

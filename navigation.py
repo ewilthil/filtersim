@@ -1,5 +1,5 @@
 import numpy as np
-from autopy.conversion import quat_to_rot, quat_mul, quat_conj
+from autopy.conversion import quat_to_rot, quat_mul, quat_conj, euler_angles_to_quaternion
 from scipy.linalg import expm, block_diag
 from scipy.stats import multivariate_normal
 from estimators import EKF_navigation
@@ -12,7 +12,9 @@ def imu_measurement(state, state_diff):
     C = euler_to_matrix(state[3:6])
     return np.hstack((state_diff[6:9]-np.cross(state[6:9], state[9:12])-np.dot(C.T,gravity_n), state[9:12]))
 def gps_measurement(state):
-    return state[0:7]
+    pos = state[0:3]
+    quat = euler_angles_to_quaternion(state[3:6])
+    return np.hstack((pos, quat))
 def sksym(qv):
     return np.array([[0,-qv[2],qv[1]],[qv[2],0,-qv[0]],[-qv[1],qv[0],0]])
 
@@ -23,10 +25,12 @@ def euler_to_matrix(ang):
 
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
-
+        acc_cov = 0
+        gyr_cov = 0
+        bias_init = np.array([0, 0, 0, 0, 0, np.deg2rad(1)])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
-        self.IMU = Sensor(imu_measurement, np.zeros(6), 1e-8*np.identity(6), imu_time)
+        self.IMU = Sensor(imu_measurement, bias_init, 1e-2*np.identity(6), imu_time)
         self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((np.pi/180)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((15,15))

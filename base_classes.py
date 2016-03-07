@@ -5,6 +5,15 @@ from scipy.linalg import block_diag
 from scipy.integrate import odeint
 from scipy.stats import chi2
 
+def pitopi(ang):
+    return (ang+np.pi)%(2*np.pi)-np.pi
+
+def radar_measurement(x, x0):
+    R = np.sqrt((x[0]-x0[0])**2+(x[1]-x0[1])**2)
+    alpha = np.arctan2(x[1]-x0[1], x[0]-x0[0])-x0[5]
+    alpha = pitopi(alpha)
+    return np.array([R, alpha])
+
 class Sensor:
     def __init__(self, h, bias, noise_cov, time_vec):
         self.h = h

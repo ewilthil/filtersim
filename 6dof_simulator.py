@@ -1,43 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tf.transformations import euler_from_quaternion
 import navigation as nav
 import visualization as viz
 import tracking as track
 import datetime
-from base_classes import Model, Sensor, ErrorStats
+from base_classes import Model, Sensor, ErrorStats, radar_measurement
 from autopy.sylte import load_pkl
 from autopy.conversion import quaternion_to_euler_angles
-from autopy.plotting import get_ellipse
-import matplotlib.animation as animation
 plt.close('all')
-
-def pitopi(ang):
-    return (ang+np.pi)%(2*np.pi)-np.pi
-
-def radar_measurement(x, x0):
-    R = np.sqrt((x[0]-x0[0])**2+(x[1]-x0[1])**2)
-    alpha = np.arctan2(x[1]-x0[1], x[0]-x0[0])-x0[5]
-    alpha = pitopi(alpha)
-    return np.array([R, alpha])
-
-def polar_to_cartesian(data):
-    x = data[0]*np.cos(data[1])
-    y = data[0]*np.sin(data[1])
-    return np.array([x,y])
-
-def ct_cov(w, T):
-    wT = w*T
-    swT = np.sin(wT)
-    cwT = np.cos(wT)
-    return np.array([[2*(wT-swT)/w**3, (1-cwT)/w**2, 0, (wT-swT)/w**2],
-        [(1-cwT)/w**2, T, -(wT-swT)/w**2, 0],
-        [0, -(wT-swT)/w**2, 2*(wT-swT)/w**3, (1-cwT)/w**2],
-        [(wT-swT)/w**2, 0, (1-cwT)/w**2, T]])
 
 N_MC = 1
 target = load_pkl('target_constant_turn.pkl')
-ownship = load_pkl('ownship_traj.pkl')
+ownship = load_pkl('ownship_turn.pkl')
 time = ownship.time
 dt = time[1]-time[0]
 Tend = time[-1]
@@ -66,8 +40,8 @@ for n_mc in range(N_MC):
     ground_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
 
     track_init_pos = np.hstack((np.hstack((target.state[0:2,0], target.NED_vel(0)[0:2]))[[0,2,1,3]],0))
-    track_init_cov = np.diag((20**2, 3**2, 20**2, 3**2, (0.1*np.pi/180)**2))
-    dwna_cov = 0.3**2
+    track_init_cov = np.diag((10**2, 2**2, 10**2, 2**2, (0.1*np.pi/180)**2))
+    dwna_cov = 2**2
     ct_cov = 0.08**2
     DWNA = 'DWNA'
     CT_known = 'CT_known'
@@ -91,19 +65,19 @@ for n_mc in range(N_MC):
             CT_unknown : np.diag((ct_cov, np.deg2rad(0.1)**2))
             }
 
-    names = (DWNA, CT_known, CT_known, CT_known, CT_known)
+    names = (DWNA, CT_known, CT_known)
     pi = np.array([[0.8, 0.1, 0.1],[0.1, 0.9, 0],[0.1, 0, 0.9]])
-    pi = np.array([[0.6, 0.2, 0.2, 0, 0],[0.2, 0.7, 0, 0.1, 0],[0.2, 0, 0.7, 0, 0.1], [0, 0.3, 0, 0.7, 0], [0, 0, 0.3, 0, 0.7]])
     prob_init = np.array([0.8, 0.1, 0.1])
-    prob_init = np.array([0.8, 0.05, 0.05, 0.05, 0.05])
     sigmas = tuple_elements(names, sigma_dict)
     imm_init_pos = tuple_elements(names, state_init_dict)
     imm_init_cov = tuple_elements(names, cov_init_dict)
-    extra_args = ({}, {'omega' : np.deg2rad(-1)},{'omega' : np.deg2rad(1)},{'omega' : np.deg2rad(-2)},{'omega' : np.deg2rad(2)})
+    extra_args = ({}, {'omega' : np.deg2rad(-1.5)},{'omega' : np.deg2rad(1.5)})
     perfect_pose_imm = track.IMM(pi, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names, extra_args)
     uncompensated_imm = track.IMM(pi, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names, extra_args)
     compensated_imm = track.IMM(pi, radar_time, sigmas, imm_init_pos, imm_init_cov, prob_init, cov_radar, names, extra_args)
 
+    schmidt = track.DWNA_schmidt(radar_time, sigma_dict[DWNA], cov_radar, state_init_dict[DWNA], cov_init_dict[DWNA])
+    no_schmidt = track.DWNA_schmidt(radar_time, sigma_dict[DWNA], cov_radar, state_init_dict[DWNA], cov_init_dict[DWNA])
     # Main loop
     print str(datetime.datetime.now())
     for k, t in enumerate(time):
@@ -123,9 +97,13 @@ for n_mc in range(N_MC):
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             perfect_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
             cov_heading = np.array([[0, 0],[0, navsys.EKF.cov_posterior[2,2,k_gps]]])
-            perfect_pose_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose, cov_radar)
-            uncompensated_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose, cov_radar)
-            compensated_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose, cov_radar+cov_heading)
+            navigation_cov = np.squeeze(navsys.EKF.cov_posterior[[[[6],[7],[2]]],[6,7,2], k_gps])
+            perfect_pose_imm.step(ownship_radar.data[:,k_radar], k_radar, perfect_pose, np.zeros((3,3)))
+            uncompensated_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose, np.zeros((3,3)))
+            compensated_imm.step(ownship_radar.data[:,k_radar], k_radar, navigation_pose, navigation_cov)
+
+            schmidt.step(ownship_radar.data[:,k_radar], navigation_pose, navigation_cov, k_radar)
+
             true_target_state = np.array([target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k], target.state_diff[5,k]])
             perfect_pose_errs.update_vals(true_target_state, perfect_pose_imm.est_posterior[:,k_radar], perfect_pose_imm.cov_posterior[:,:,k_radar], k_radar, n_mc)
             uncompensated_errs.update_vals(true_target_state, uncompensated_imm.est_posterior[:,k_radar], uncompensated_imm.cov_posterior[:,:,k_radar], k_radar, n_mc)
@@ -148,10 +126,14 @@ consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs
 xy_fig, xy_ax = plt.subplots(1,3)
 vel_fig, vel_ax = plt.subplots(2,1)
 ang_fig, ang_ax = plt.subplots(2,1)
+likelihood_fig, likelihood_ax = plt.subplots(3,1)
+own_arg = {'color' : 'k', 'label' : 'Ownship pose'}
 for j, imm in enumerate(imms):
     viz.target_xy(target, imm, xy_ax[j], args[j])
+    viz.target_xy(ownship, imm, xy_ax[j], own_arg)
     xy_ax[j].set_title(args[j]['label'])
     viz.target_velocity(target, imm, vel_ax, args[j])
     viz.target_angular_rate(target, imm, ang_ax[0], args[j])
     viz.DWNA_probability(imm, ang_ax[1], args[j])
+    viz.likelihoods(imms[j], likelihood_ax[j], args[j])
 plt.show()

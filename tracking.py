@@ -1,10 +1,11 @@
 import numpy as np
 import ipdb
-from base_classes import Sensor
+from base_classes import Sensor, pitopi
 from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
 from estimators import KF, EKF
 from autopy.conversion import heading_to_matrix_2D
+
 def polar_to_cartesian(z):
     return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])
 class IMM:
@@ -131,17 +132,27 @@ class TrackingFilter:
 
     def convert_measurement(self, measurement):
         r = measurement[0]
-        alpha = measurement[1]
-        Rot = heading_to_matrix_2D(alpha)
-        R_marked = np.zeros((2,2))
-        R_marked += self.R_polar
-        R_marked[1,1] = R_marked[1,1]*r**2
-        R_z = np.dot(Rot, np.dot(R_marked, Rot.T))
-        x = r*np.cos(alpha)
-        y = r*np.sin(alpha)
-        pos_local = np.array([x,y])
-        pos_global = self.pose[0:2]+np.dot(heading_to_matrix_2D(self.pose[2]), pos_local)
-        return pos_global, R_z
+        theta = measurement[1]
+        x_o = self.pose[0]
+        y_o = self.pose[1]
+        psi = self.pose[2]
+        s_tp = np.sin(theta+psi)
+        c_tp = np.cos(theta+psi)
+        x_t = x_o+r*c_tp
+        y_t = y_o+r*s_tp
+        mu_t = np.array([x_t, y_t])
+        xo_cov = self.pose_cov[0,0]
+        yo_cov = self.pose_cov[1,1]
+        psi_cov = self.pose_cov[2,2]
+        Rot = heading_to_matrix_2D(theta+psi)
+        R_polar_heading_comp = np.diag((self.R_polar[0,0], r**2*(self.R_polar[1,1]+psi_cov)))
+        R_xy_heading_comp = np.dot(Rot, np.dot(R_polar_heading_comp, Rot.T))
+        cov_t = np.zeros((2,2))
+        cov_t[0,0] = xo_cov+R_xy_heading_comp[0,0]-2*s_tp*r*self.pose_cov[0,2]
+        cov_t[1,1] = yo_cov+R_xy_heading_comp[1,1]+2*c_tp*r*self.pose_cov[1,2]
+        cov_t[1,0] = self.pose_cov[0,1]+R_xy_heading_comp[0,1]+r*(c_tp*self.pose_cov[0,2]-s_tp*self.pose_cov[1,2])
+        cov_t[0,1] = cov_t[1,0]
+        return mu_t, cov_t
     
     def biased_conversion(self, z):
         range_measure = z[0]
@@ -165,9 +176,9 @@ class TrackingFilter:
         return pos_global, cov_global
 
 
-    def update_sensor_pose(self, pose, R_polar):
+    def update_sensor_pose(self, pose, pose_cov):
         self.pose = pose
-        self.R_polar = R_polar
+        self.pose_cov = pose_cov
 
     def evaluate_likelihood(self, k):
         diff = self.filter.measurement-self.filter.measurement_prediction
@@ -200,12 +211,11 @@ class TrackingFilter:
         return Q
 
 class DWNA_filter(TrackingFilter):
-    def __init__(self, time, sigma_v, R_polar, state_init, cov_init):
+    def __init__(self, time, Q, R_polar, state_init, cov_init):
         TrackingFilter.__init__(self, time, state_init, cov_init, R_polar)
         self.omega = 0
         Fsub = np.array([[1, self.dt],[0, 1]])
         F = block_diag(Fsub, Fsub)
-        Q = sigma_v
         H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
         self.R = np.zeros((2,2,self.N))
         self.filter = KF(F, H, Q, np.zeros((2,2)), state_init, cov_init)
@@ -294,5 +304,63 @@ class CT_known(TrackingFilter):
         swT = np.sin(wT)
         cwT = np.cos(wT)
         return np.array([[1, swT/w, 0, -(1.-cwT)/w],[0, cwT, 0, -swT],[0, (1.-cwT)/w, 1, swT/w],[0, swT, 0, cwT]])
+
+class DWNA_schmidt():
+    def __init__(self, time, Q, R_polar, est_init, cov_init):
+        self.time = time
+        self.dt =  time[1]-time[0]
+        self.N = len(time)
+        self.nx = 4
+        self.nz = 2
+        self.estimate_init(len(est_init), self.N)
+        self.est_prior[:,0] = est_init
+        self.cov_prior[:,:,0] = cov_init
+        Fsub = np.array([[1, self.dt],[0, 1]])
+        F = block_diag(Fsub, Fsub)
+        f = lambda x : np.dot(F, x)
+        self.R_polar = R_polar
+        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(3)), lambda x : Q, R_polar, est_init, cov_init, lambda x : F, H=self.measurement_jacobian)
+
+    def step(self, radar_measurement, ownship_pose, ownship_cov, k):
+        if k > 0:
+            self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
+        self.filter.h = lambda x : self.measurement(x, ownship_pose)
+        self.filter.H = lambda x : self.measurement_jacobian(x, ownship_pose)
+        H_o = self.ownship_measurement_noise(self.filter.est_prior, ownship_pose)
+        self.filter.R = self.R_polar+np.dot(H_o, np.dot(ownship_cov, H_o.T))
+        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(radar_measurement)
+
+    def estimate_init(self, nx, N):
+        self.est_posterior = np.zeros((nx, N))
+        self.cov_posterior = np.zeros((nx, nx, N))
+        self.est_prior = np.zeros((nx, N))
+        self.cov_prior = np.zeros((nx, nx, N))
+
+    def measurement(self, target_state, ownship_state):
+        target_pos = np.hstack((target_state[0], target_state[2]))
+        R = np.linalg.norm(target_pos-ownship_state[:2])
+        theta = np.arctan2(target_pos[1]-ownship_state[1], target_pos[0]-ownship_state[0])-ownship_state[2]
+        return np.array([R, pitopi(theta)])
+    
+    def measurement_jacobian(self, target_state, ownship_state):
+        target_pos = np.hstack((target_state[0], target_state[2]))
+        R = np.linalg.norm(target_pos-ownship_state[:2])
+        H = np.zeros((self.nz, self.nx))
+        H[0,0] = (target_pos[0]-ownship_state[0])/R
+        H[0,2] = (target_pos[1]-ownship_state[1])/R
+        H[1,0] = (ownship_state[1]-target_pos[1])/R**2
+        H[1,2] = (target_pos[0]-ownship_state[0])/R**2
+        return H
+
+    def ownship_measurement_noise(self, target_state, ownship_state):
+        H_s = np.zeros((2,3))
+        target_pos = np.hstack((target_state[0], target_state[2]))
+        R = np.linalg.norm(target_pos-ownship_state[:2])
+        H_s[0,0] = -(target_pos[0]-ownship_state[0])/R
+        H_s[0,1] = -(target_pos[1]-ownship_state[1])/R
+        H_s[1,0] = (target_pos[1]-ownship_state[1])/R**2
+        H_s[1,1] = (ownship_state[0]-target_pos[0])/R**2
+        H_s[1,2] = -1
+        return H_s
 
 model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

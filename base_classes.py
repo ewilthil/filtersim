@@ -109,9 +109,11 @@ class ErrorStats:
             self.RMSE_pos[n_mc, n] = diff_state[0]**2+diff_state[2]**2
             self.RMSE_vel[n_mc, n] = diff_state[1]**2+diff_state[3]**2
 
-    def plot_errors(self, NEES_ax, RMSE_pos_ax, RMSE_vel_ax):
-        UB = chi2(df=2*self.N_mc).ppf(0.975)/self.N_mc*np.ones_like(self.time)
-        LB = chi2(df=2*self.N_mc).ppf(0.025)/self.N_mc*np.ones_like(self.time)
+    def plot_errors(self, NEES_ax, RMSE_pos_ax, RMSE_vel_ax,percentile=0.95):
+        lower_lim = (1-percentile)/2
+        upper_lim = 1-lower_lim
+        UB = chi2(df=2*self.N_mc).ppf(upper_lim)/self.N_mc*np.ones_like(self.time)
+        LB = chi2(df=2*self.N_mc).ppf(lower_lim)/self.N_mc*np.ones_like(self.time)
         NEES_ax.plot(self.time, np.mean(self.NEES, axis=0), **self.plot_args)
         NEES_ax.plot(self.time, UB, 'k')
         NEES_ax.plot(self.time, LB, 'k')

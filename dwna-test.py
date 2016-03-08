@@ -8,9 +8,10 @@ import autopy.conversion as conv
 from base_classes import Model, Sensor, ErrorStats, radar_measurement
 from autopy.sylte import load_pkl
 from scipy.linalg import block_diag
+from scipy.stats import multivariate_normal
 plt.close('all')
 
-N_MC = 50
+N_MC = 100
 target = load_pkl('target_straight.pkl')
 ownship = load_pkl('ownship_turn.pkl')
 time = ownship.time
@@ -38,16 +39,20 @@ Q_DWNA = acc_cov*block_diag(Q_sub, Q_sub)
 
 #Plot arguments
 own_arg = {'color' : 'k', 'label' : 'Ownship'}
-schmidt_args = {'color' : 'g', 'label': 'Schmidt'}
+schmidt_args = {'color' : 'g', 'label': 'Schmidt', 'linestyle' : '-'}
 ground_truth_args = {'color' : 'b', 'label' : 'Ground truth pose'}
-uncomp_args = {'color' : 'r', 'label' : 'Uncompensated'}
+uncomp_args = {'color' : 'r', 'label' : 'Uncompensated', 'linestyle' : '-'}
+conv_meas_args = {'color' : 'y', 'label' : 'Converted measurement'}
+arg = (ground_truth_args, uncomp_args, schmidt_args, conv_meas_args)
+errs = ()
 # Error statistics
-schmidt_errs = ErrorStats(radar_time, N_MC, schmidt_args)
-ground_truth_errs = ErrorStats(radar_time, N_MC, ground_truth_args)
-uncomp_errs = ErrorStats(radar_time, N_MC, uncomp_args)
+for a in arg:
+    errs =errs+(ErrorStats(radar_time, N_MC, a),)
+#schmidt_errs = ErrorStats(radar_time, N_MC, schmidt_args)
+#ground_truth_errs = ErrorStats(radar_time, N_MC, ground_truth_args)
+#uncomp_errs = ErrorStats(radar_time, N_MC, uncomp_args)
+#conv_meas_errs = ErrorStats(radar_time, N_MC, conv_meas_args)
 # Group up
-arg = (ground_truth_args, uncomp_args, schmidt_args)
-errs = (ground_truth_errs, uncomp_errs, schmidt_errs)
 print str(datetime.datetime.now())
 for n_mc in range(N_MC):
     # (re)initialize instances
@@ -56,7 +61,8 @@ for n_mc in range(N_MC):
     schmidt = track.DWNA_schmidt(radar_time, Q_DWNA, cov_radar, track_state_init, track_cov_init)
     ground_truth = track.DWNA_schmidt(radar_time, Q_DWNA, cov_radar, track_state_init, track_cov_init)
     uncompensated_tracker = track.DWNA_schmidt(radar_time, Q_DWNA, cov_radar, track_state_init, track_cov_init)
-    trackers = (ground_truth, uncompensated_tracker, schmidt)
+    conv_meas = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_init, track_cov_init)
+    trackers = (ground_truth, uncompensated_tracker, schmidt, conv_meas)
 
     
     # run the navigation and tracking filters
@@ -75,14 +81,15 @@ for n_mc in range(N_MC):
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             ground_truth_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
             navigation_cov = np.squeeze(navsys.EKF.cov_posterior[[[[6],[7],[2]]],[6,7,2], k_gps])
+            navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
             true_track_state = np.hstack((target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
             # The poses and covs match the order in tracker defined on the top
-            poses = (ground_truth_pose, navigation_pose, navigation_pose)
-            covs = (np.zeros((3,3)), np.zeros((3,3)), navigation_cov)
+            poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose)
+            covs = (np.zeros((3,3)), np.zeros((3,3)), navigation_cov, navigation_cov)
             # Step the tracking filters
             for j, tracker in enumerate(trackers):
                 tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar)
-                errs[j].update_vals(true_track_state, tracker.est_posterior[:,k_radar], tracker.cov_posterior[:,:,k_radar], k_radar, n_mc)
+                errs[j].update_vals(true_track_state, tracker.est_posterior[:4,k_radar], tracker.cov_posterior[:4,:4,k_radar], k_radar, n_mc)
     print str(datetime.datetime.now())
 
 
@@ -94,7 +101,8 @@ consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo run
 consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
 [consistency_ax[j].legend() for j in range(3)]
 
-xy_fig, xy_ax = plt.subplots(1,3)
+xy_fig, xy_ax = plt.subplots(2,2)
+xy_ax = xy_ax.reshape(4)
 vel_fig, vel_ax = plt.subplots(2,1)
 for j in range(len(arg)):
     viz.target_xy(target, trackers[j], xy_ax[j], arg[j])

@@ -121,7 +121,8 @@ class TrackingFilter:
         self.measurement_innovation = np.zeros((2, self.N))
         self.measurement_innovation_covariance = np.zeros((2,2,self.N))
 
-    def step(self, measurement, k):
+    def step(self, measurement, pose=np.zeros(3), cov = np.zeros((3,3)), k=10):
+        self.update_sensor_pose(pose, cov)
         pos_meas, cov_meas = self.convert_measurement(measurement)
         self.R[:,:,k] = cov_meas
         self.filter.R = cov_meas
@@ -310,24 +311,24 @@ class DWNA_schmidt():
         self.time = time
         self.dt =  time[1]-time[0]
         self.N = len(time)
-        self.nx = 4
+        self.nx = 7
         self.nz = 2
-        self.estimate_init(len(est_init), self.N)
-        self.est_prior[:,0] = est_init
-        self.cov_prior[:,:,0] = cov_init
+        self.estimate_init(self.nx, self.N)
+        self.est_prior[:,0] = np.hstack((est_init, np.zeros(3)))
+        self.cov_prior[:,:,0] = block_diag(cov_init, np.zeros((3,3)))
         Fsub = np.array([[1, self.dt],[0, 1]])
-        F = block_diag(Fsub, Fsub)
+        F = block_diag(Fsub, Fsub, np.identity(3))
         f = lambda x : np.dot(F, x)
         self.R_polar = R_polar
-        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(3)), lambda x : Q, R_polar, est_init, cov_init, lambda x : F, H=self.measurement_jacobian)
+        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(3)), lambda x : block_diag(Q, np.zeros((3,3))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
 
     def step(self, radar_measurement, ownship_pose, ownship_cov, k):
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
+        self.filter.cov_prior[4:,4:] = ownship_cov
         self.filter.h = lambda x : self.measurement(x, ownship_pose)
-        self.filter.H = lambda x : self.measurement_jacobian(x, ownship_pose)
-        H_o = self.ownship_measurement_noise(self.filter.est_prior, ownship_pose)
-        self.filter.R = self.R_polar+np.dot(H_o, np.dot(ownship_cov, H_o.T))
+        self.filter.H = lambda x : np.hstack((self.measurement_jacobian(x, ownship_pose), self.ownship_measurement_jacobian(x, ownship_pose)))
+        self.filter.R = self.R_polar
         self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(radar_measurement)
 
     def estimate_init(self, nx, N):
@@ -340,27 +341,27 @@ class DWNA_schmidt():
         target_pos = np.hstack((target_state[0], target_state[2]))
         R = np.linalg.norm(target_pos-ownship_state[:2])
         theta = np.arctan2(target_pos[1]-ownship_state[1], target_pos[0]-ownship_state[0])-ownship_state[2]
-        return np.array([R, pitopi(theta)])
+        return np.hstack((R, pitopi(theta)))
     
     def measurement_jacobian(self, target_state, ownship_state):
         target_pos = np.hstack((target_state[0], target_state[2]))
         R = np.linalg.norm(target_pos-ownship_state[:2])
-        H = np.zeros((self.nz, self.nx))
+        H = np.zeros((self.nz, 4))
         H[0,0] = (target_pos[0]-ownship_state[0])/R
         H[0,2] = (target_pos[1]-ownship_state[1])/R
         H[1,0] = (ownship_state[1]-target_pos[1])/R**2
         H[1,2] = (target_pos[0]-ownship_state[0])/R**2
         return H
 
-    def ownship_measurement_noise(self, target_state, ownship_state):
-        H_s = np.zeros((2,3))
+    def ownship_measurement_jacobian(self, target_state, ownship_state):
+        H_o = np.zeros((2,3))
         target_pos = np.hstack((target_state[0], target_state[2]))
         R = np.linalg.norm(target_pos-ownship_state[:2])
-        H_s[0,0] = -(target_pos[0]-ownship_state[0])/R
-        H_s[0,1] = -(target_pos[1]-ownship_state[1])/R
-        H_s[1,0] = (target_pos[1]-ownship_state[1])/R**2
-        H_s[1,1] = (ownship_state[0]-target_pos[0])/R**2
-        H_s[1,2] = -1
-        return H_s
+        H_o[0,0] = (ownship_state[0]-target_pos[0])/R
+        H_o[0,1] = (ownship_state[1]-target_pos[1])/R
+        H_o[1,0] = (target_pos[1]-ownship_state[1])/R**2
+        H_o[1,1] = (ownship_state[0]-target_pos[0])/R**2
+        H_o[1,2] = -1
+        return H_o
 
 model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

@@ -1,5 +1,5 @@
 import numpy as np
-from autopy.conversion import quat_to_rot, quat_mul, quat_conj, euler_angles_to_quaternion
+import autopy.conversion as conv
 from scipy.linalg import expm, block_diag
 from scipy.stats import multivariate_normal
 from estimators import EKF_navigation
@@ -9,11 +9,11 @@ from base_classes import Sensor
 
 gravity_n = np.array([0, 0, 9.81])
 def imu_measurement(state, state_diff):
-    C = euler_to_matrix(state[3:6])
+    C = conv.euler_angles_to_matrix(state[3:6])
     return np.hstack((state_diff[6:9]-np.cross(state[6:9], state[9:12])-np.dot(C.T,gravity_n), state[9:12]))
 def gps_measurement(state):
     pos = state[0:3]
-    quat = euler_angles_to_quaternion(state[3:6])
+    quat = conv.euler_angles_to_quaternion(state[3:6])
     return np.hstack((pos, quat))
 def sksym(qv):
     return np.array([[0,-qv[2],qv[1]],[qv[2],0,-qv[0]],[-qv[1],qv[0],0]])
@@ -58,7 +58,7 @@ class NavigationSystem:
         
     
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):
-        C = quat_to_rot(quat_est)
+        C = conv.quat_to_rot(quat_est)
         F = np.zeros((15,15))
         F[0:3,12:15] = -C
         F[3:6,0:3] = -sksym(np.dot(C, spec_force_est))
@@ -122,7 +122,7 @@ class Strapdown:
         prev_q = self.data[self.orient, k-1]
         prev_vel = self.data[self.vel, k-1]
         spec_force = self.data[self.spec_force, k]
-        R = 0.5*(quat_to_rot(q)+quat_to_rot(prev_q))
+        R = 0.5*(conv.quat_to_rot(q)+conv.quat_to_rot(prev_q))
         self.data[self.vel,k] = prev_vel + self.dt*(np.dot(R,spec_force)+gravity_n)
 
     def update_poisition(self, k):
@@ -139,6 +139,6 @@ class Strapdown:
     def correct_estimates(self, delta_ang, delta_vel, delta_pos, k):
         delta_quat = np.hstack((delta_ang/2,1))
         delta_quat = delta_quat/np.linalg.norm(delta_quat)
-        self.data[self.orient,k] = quat_mul(delta_quat,self.data[self.orient,k])
+        self.data[self.orient,k] = conv.quat_mul(delta_quat,self.data[self.orient,k])
         self.data[self.vel,k] = self.data[self.vel,k]+delta_vel
         self.data[self.pos,k] = self.data[self.pos,k]+delta_pos

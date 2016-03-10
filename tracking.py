@@ -142,17 +142,9 @@ class TrackingFilter:
         x_t = x_o+r*c_tp
         y_t = y_o+r*s_tp
         mu_t = np.array([x_t, y_t])
-        xo_cov = self.pose_cov[0,0]
-        yo_cov = self.pose_cov[1,1]
-        psi_cov = self.pose_cov[2,2]
-        Rot = heading_to_matrix_2D(theta+psi)
-        R_polar_heading_comp = np.diag((self.R_polar[0,0], r**2*(self.R_polar[1,1]+psi_cov)))
-        R_xy_heading_comp = np.dot(Rot, np.dot(R_polar_heading_comp, Rot.T))
-        cov_t = np.zeros((2,2))
-        cov_t[0,0] = xo_cov+R_xy_heading_comp[0,0]-2*s_tp*r*self.pose_cov[0,2]
-        cov_t[1,1] = yo_cov+R_xy_heading_comp[1,1]+2*c_tp*r*self.pose_cov[1,2]
-        cov_t[1,0] = self.pose_cov[0,1]+R_xy_heading_comp[0,1]+r*(c_tp*self.pose_cov[0,2]-s_tp*self.pose_cov[1,2])
-        cov_t[0,1] = cov_t[1,0]
+        G_x = np.array([[1, 0, -r*s_tp],[0, 1, r*c_tp]])
+        G_z = np.array([[c_tp, -r*s_tp],[s_tp, r*c_tp]])
+        cov_t = np.dot(G_x, np.dot(self.pose_cov, G_x.T))+np.dot(G_z, np.dot(self.R_polar, G_z.T))
         return mu_t, cov_t
     
     def biased_conversion(self, z):

@@ -113,8 +113,11 @@ class Strapdown:
         ang_rate = self.data[self.rate, k]
         qv = q_prev[0:3]
         qw = q_prev[3]
+        ang_arg = np.linalg.norm(ang_rate)*self.dt/2
+        quat_inc = np.hstack((ang_rate/np.linalg.norm(ang_rate)*np.sin(ang_arg), np.cos(ang_arg)))
         T = 0.5*np.vstack((np.array(qw*np.eye(3)+sksym(qv)),-qv))
-        self.data[self.orient,k] = q_prev + self.dt*np.dot(T, ang_rate)
+        #self.data[self.orient,k] = q_prev + self.dt*np.dot(T, ang_rate)
+        self.data[self.orient,k] = conv.quat_mul(q_prev, quat_inc)
         self.data[self.orient,k] = self.data[self.orient,k]/np.linalg.norm(self.data[self.orient,k])
 
     def update_velocity(self, k):

@@ -30,7 +30,7 @@ class NavigationSystem:
         bias_init = np.array([0, 0, 0, 0, 0, 0])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
-        self.IMU = Sensor(imu_measurement, bias_init, 1e-2*np.identity(6), imu_time)
+        self.IMU = Sensor(imu_measurement, bias_init, 1e-5*np.identity(6), imu_time)
         self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((np.pi/180)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((15,15))
@@ -39,7 +39,7 @@ class NavigationSystem:
         cov_init[6:9,6:9] = 10**2*np.identity(3)
         cov_init[9:15,9:15] = 0*1e-5*np.identity(6)
         self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(15), cov_init, gps_time)
-        self.Q_cont = block_diag(1e-2*np.identity(3), 1e-2*np.identity(3), np.zeros((3,3)), np.zeros((3,3)), np.zeros((3,3)))
+        self.Q_cont = block_diag(1e-5*np.identity(3), 1e-5*np.identity(3), 1e-8*np.identity(9))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]
@@ -64,10 +64,12 @@ class NavigationSystem:
         F[3:6,0:3] = -sksym(np.dot(C, spec_force_est))
         F[3:6,9:12] = -C
         F[6:9,3:6] = np.identity(3)
-        Phi = expm(self.EKF.dt*F)
+        Phi = np.identity(15)+self.EKF.dt*F#expm(self.EKF.dt*F)
         H = np.zeros((7,15))
         H[0:3,6:9] = np.identity(3)
-        H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)-sksym(quat_est[0:3]),-quat_est[0:3]))
+        H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
+        self.Q_cont[:3,:3] = 1e-5*C
+        self.Q_cont[3:6,3:6] = 1e-5*C
         Q = self.EKF.dt*np.dot(Phi,np.dot(self.Q_cont,Phi.T))
         return Phi, H, Q
 

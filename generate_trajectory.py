@@ -7,7 +7,7 @@ dt, Tend = 0.01, 300
 time = np.arange(0, Tend+dt, dt)
 D = -np.diag((0.5, 1, 10, 10, 10, 1))
 T = -np.diag((30, 1, 30, 10, 10, 60))
-Q = np.diag((1e-1, 1, 1e-1, 1, 1, 1e-5))*1e-8
+Q = np.diag((1e-2, 1e-2, 1e-4, 1e-4, 1e-4, 5e-4))
 
 initial_target_heading = np.deg2rad(225)
 final_target_heading = np.deg2rad(225)
@@ -31,7 +31,7 @@ def target_turnfunc(t):
 target_func = lambda t : np.array([target_velfunc(t), target_turnfunc(t)])
 
 initial_ownship_heading = np.deg2rad(0)
-final_ownship_heading = np.deg2rad(60)
+final_ownship_heading = np.deg2rad(45)
 maneuver_duration = 20
 maneuver_end = maneuver_start+maneuver_duration
 ownship_velocity = 10
@@ -63,6 +63,10 @@ ax[0].plot(ownship.state[1,:],ownship.state[0,:])
 ax[1].plot(target.time, np.rad2deg(target_ref[1,:]))
 ax[1].plot(target.time, np.rad2deg(target.state[5,:]))
 ax[2].plot(target.time, np.rad2deg(target.state_diff[5,:]))
+vel_fig, vel_ax = plt.subplots(2,1)
+vel_ax[0].plot(target.time, target.state_diff[0,:])
+vel_ax[1].plot(target.time, target.state_diff[1,:])
+
 plt.show()
 #dump_pkl(target, 'target_test.pkl')
 #dump_pkl(ownship, 'ownship_test.pkl')

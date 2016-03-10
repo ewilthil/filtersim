@@ -106,8 +106,9 @@ class ErrorStats:
     def update_vals(self, true_state, est_state, cov, n, n_mc):
             diff_state = true_state-est_state
             self.NEES[n_mc, n] = np.dot(diff_state, np.dot(np.linalg.inv(cov), diff_state))
-            self.RMSE_pos[n_mc, n] = diff_state[0]**2+diff_state[2]**2
-            self.RMSE_vel[n_mc, n] = diff_state[1]**2+diff_state[3]**2
+            if true_state.shape[0] >= 4:
+                self.RMSE_pos[n_mc, n] = diff_state[0]**2+diff_state[2]**2
+                self.RMSE_vel[n_mc, n] = diff_state[1]**2+diff_state[3]**2
 
     def plot_errors(self, NEES_ax, RMSE_pos_ax, RMSE_vel_ax,percentile=0.95):
         lower_lim = (1-percentile)/2

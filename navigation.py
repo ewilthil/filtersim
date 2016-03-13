@@ -48,13 +48,14 @@ class NavigationSystem:
     def step_filter(self, state, k_imu, k_gps):
         self.GPS.generate_measurement(state, k_gps)
         quat, _, pos, omega, spec_force = self.get_strapdown_estimate(k_imu)
-        Phi, H, Q = self.calculate_jacobians(omega, spec_force, quat)
+        Phi, H, Q, F = self.calculate_jacobians(omega, spec_force, quat)
         z = self.GPS.data[:,k_gps]
         z_est = np.hstack((self.strapdown.data[self.strapdown.pos,k_imu], self.strapdown.data[self.strapdown.orient,k_imu]))
         error_state, error_cov = self.EKF.step(z, z_est, Phi, H, Q, k_gps)
         self.strapdown.update_bias(error_state[9:12], error_state[12:15])
         self.strapdown.correct_estimates(error_state[0:3], error_state[3:6], error_state[6:9], k_imu)
         self.transform_covariance(k_gps)
+        return F
         
     
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):
@@ -71,7 +72,7 @@ class NavigationSystem:
         self.Q_cont[:3,:3] = 1e-5*C
         self.Q_cont[3:6,3:6] = 1e-5*C
         Q = self.EKF.dt*np.dot(Phi,np.dot(self.Q_cont,Phi.T))
-        return Phi, H, Q
+        return Phi, H, Q, F
 
     def get_strapdown_estimate(self, k_imu):
         state = self.strapdown.data[:,k_imu]

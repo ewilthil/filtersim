@@ -1,4 +1,5 @@
 import numpy as np
+from base_classes import pitopi
 class EKF_navigation:
     def __init__(self, f, h, R, est_init, cov_init, time, F=None, H=None):
         self.f = f
@@ -87,8 +88,14 @@ class EKF:
         H_k = self.H(self.est_prior)
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
+        K[4:,:] = np.zeros((15,2))
         self.measurement_prediction = self.h(self.est_prior)
-        self.est_posterior = self.est_prior+np.dot(K, measurement-self.measurement_prediction)
-        cov = np.dot(np.identity(self.F(self.est_prior).shape[0])-np.dot(K, H_k), self.cov_prior)
+        innovation = self.measurement-self.measurement_prediction
+        innovation[1] = pitopi(innovation[1])
+        self.est_posterior = self.est_prior+np.dot(K, innovation)
+        nx = len(self.est_posterior)
+        hea = np.identity(nx)-np.dot(K,H_k)
+        cov = np.dot(hea, np.dot(self.cov_prior, hea.T))+np.dot(K, np.dot(self.R, K.T))
+        #cov = np.dot(np.identity(self.F(self.est_prior).shape[0])-np.dot(K, H_k), self.cov_prior)
         self.cov_posterior = 0.5*(cov+cov.T)
         return self.est_posterior, self.cov_posterior

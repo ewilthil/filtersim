@@ -25,21 +25,22 @@ def euler_to_matrix(ang):
 
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
-        acc_cov = 0
-        gyr_cov = 0
+        self.acc_cov = 1e-3
+        self.gyr_cov = 1e-3
         bias_init = np.array([0, 0, 0, 0, 0, 0])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
-        self.IMU = Sensor(imu_measurement, bias_init, 1e-5*np.identity(6), imu_time)
+        self.IMU = Sensor(imu_measurement, bias_init, block_diag(self.acc_cov*np.identity(3), self.gyr_cov*np.identity(3)), imu_time)
         self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((np.pi/180)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((15,15))
         cov_init[0:3,0:3] = (1*np.pi/180)**2*np.identity(3)
         cov_init[3:6,3:6] = 2**2*np.identity(3)
         cov_init[6:9,6:9] = 10**2*np.identity(3)
-        cov_init[9:15,9:15] = 0*1e-5*np.identity(6)
+        cov_init[9:15,9:15] = 1e-6*np.identity(6)
+
         self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(15), cov_init, gps_time)
-        self.Q_cont = block_diag(1e-5*np.identity(3), 1e-5*np.identity(3), 1e-8*np.identity(9))
+        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-9*np.identity(9))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]
@@ -48,31 +49,33 @@ class NavigationSystem:
     def step_filter(self, state, k_imu, k_gps):
         self.GPS.generate_measurement(state, k_gps)
         quat, _, pos, omega, spec_force = self.get_strapdown_estimate(k_imu)
-        Phi, H, Q, F = self.calculate_jacobians(omega, spec_force, quat)
+        Phi, H, Q, F, Q_temp = self.calculate_jacobians(omega, spec_force, quat)
         z = self.GPS.data[:,k_gps]
         z_est = np.hstack((self.strapdown.data[self.strapdown.pos,k_imu], self.strapdown.data[self.strapdown.orient,k_imu]))
         error_state, error_cov = self.EKF.step(z, z_est, Phi, H, Q, k_gps)
         self.strapdown.update_bias(error_state[9:12], error_state[12:15])
         self.strapdown.correct_estimates(error_state[0:3], error_state[3:6], error_state[6:9], k_imu)
         self.transform_covariance(k_gps)
-        return F
+        return F, Q_temp
         
     
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):
         C = conv.quat_to_rot(quat_est)
         F = np.zeros((15,15))
-        F[0:3,12:15] = -C
+        F[0:3,12:15] = C
         F[3:6,0:3] = -sksym(np.dot(C, spec_force_est))
-        F[3:6,9:12] = -C
+        F[3:6,9:12] = C
         F[6:9,3:6] = np.identity(3)
-        Phi = np.identity(15)+self.EKF.dt*F#expm(self.EKF.dt*F)
+        Phi = expm(self.EKF.dt*F)
         H = np.zeros((7,15))
         H[0:3,6:9] = np.identity(3)
         H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
-        self.Q_cont[:3,:3] = 1e-5*C
-        self.Q_cont[3:6,3:6] = 1e-5*C
-        Q = self.EKF.dt*np.dot(Phi,np.dot(self.Q_cont,Phi.T))
-        return Phi, H, Q, F
+
+        B = block_diag(C, C, np.zeros((9,9)))
+        Q_temp = np.zeros((15,15))
+        Q_temp = np.dot(B, np.dot(self.Q_cont, B.T))
+        Q = self.EKF.dt*np.dot(Phi,np.dot(Q_temp,Phi.T))
+        return Phi, H, Q, F, Q_temp
 
     def get_strapdown_estimate(self, k_imu):
         state = self.strapdown.data[:,k_imu]
@@ -81,7 +84,7 @@ class NavigationSystem:
     def transform_covariance(self, k):
         err_ang = self.EKF.est_posterior[0:3,k]
         err_cov = self.EKF.cov_posterior[:,:,k]
-        G_ang = np.identity(3)+sksym(0.5*err_ang)
+        G_ang = np.identity(3)-sksym(0.5*err_ang)
         G = block_diag(G_ang, np.identity(12))
         self.EKF.cov_posterior[:,:,k] = np.dot(G,np.dot(err_cov,G.T))
 
@@ -139,8 +142,8 @@ class Strapdown:
         self.data[self.rate,k] = imu_data[3:6]-self.bias_gyr
     
     def update_bias(self, delta_bias_acc, delta_bias_gyr):
-        self.bias_acc += delta_bias_acc
-        self.bias_gyr += delta_bias_gyr
+        self.bias_acc -= delta_bias_acc
+        self.bias_gyr -= delta_bias_gyr
 
     def correct_estimates(self, delta_ang, delta_vel, delta_pos, k):
         delta_quat = np.hstack((delta_ang/2,1))

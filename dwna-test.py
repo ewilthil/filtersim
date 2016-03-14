@@ -11,7 +11,7 @@ from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
 plt.close('all')
 
-N_MC = 100
+N_MC = 10
 target = load_pkl('target_straight.pkl')
 ownship = load_pkl('ownship_straight.pkl')
 time = ownship.time
@@ -53,6 +53,8 @@ ang_args = {'color' : 'g', 'label': 'Angle', 'linestyle' : '-'}
 vel_args = {'color' : 'b', 'label' : 'Velocity'}
 pos_args = {'color' : 'r', 'label' : 'Position', 'linestyle' : '-'}
 total_args = {'color' : 'y', 'label' : 'Total'}
+bias_args = {'color' : 'c', 'label' : 'Acc bias'}
+gyr_bias_args = {'color' : 'm', 'label' : 'Gyr bias'}
 nav_args = (ang_args, vel_args, pos_args, total_args)
 nav_errs = ()
 for a in nav_args:
@@ -82,7 +84,7 @@ for n_mc in range(N_MC):
             navsys.step_strapdown(ownship.state[:,k], ownship.state_diff[:,k], k_imu)
         k_gps, rest_gps = int(np.floor(k/M_gps)), np.mod(k,M_gps)
         if rest_gps == 0:
-            F_ownship = navsys.step_filter(ownship.state[:,k], k_imu, k_gps)
+            F_ownship, Q_ownship = navsys.step_filter(ownship.state[:,k], k_imu, k_gps)
             est_quat, est_vel, est_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
             true_pos_err = ownship.state[:3,k]-est_pos
             true_vel_err = ownship.state_diff[:3,k]-est_vel
@@ -94,6 +96,8 @@ for n_mc in range(N_MC):
             cov_ang = navsys.EKF.cov_posterior[:3,:3,k_gps]
             cov_vel = navsys.EKF.cov_posterior[3:6,3:6,k_gps]
             cov_pos = navsys.EKF.cov_posterior[6:9,6:9,k_gps]
+            cov_acc = navsys.EKF.cov_posterior[9:12,9:12,k_gps]
+            cov_gyr = navsys.EKF.cov_posterior[12:,12:,k_gps]
             cov_all = navsys.EKF.cov_posterior[:9,:9,k_gps]
             nav_errs[0].update_vals(true_ang_err, est_ang_err, cov_ang, k_gps, n_mc)
             nav_errs[1].update_vals(true_vel_err, est_vel_err, cov_vel, k_gps, n_mc)
@@ -109,14 +113,15 @@ for n_mc in range(N_MC):
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             ground_truth_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
             navigation_cov = np.squeeze(navsys.EKF.cov_posterior[[[[6],[7],[2]]],[6,7,2], k_gps])
-            navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
+            #navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
             true_track_state = np.hstack((target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
             # The poses and covs match the order in tracker defined on the top
             poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose)
-            covs = (np.zeros((3,3)), np.zeros((3,3)), navigation_cov, navigation_cov)
+            covs = (np.zeros((3,3)), np.zeros((3,3)), navsys.EKF.cov_posterior[:,:,k_gps], navigation_cov)
+            exargs = ({}, {}, {'F' : F_ownship, 'Q' : Q_ownship}, {})
             # Step the tracking filters
             for j, tracker in enumerate(trackers):
-                tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar)
+                tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar, **exargs[j])
                 errs[j].update_vals(true_track_state, tracker.est_posterior[:4,k_radar], tracker.cov_posterior[:4,:4,k_radar], k_radar, n_mc)
     print str(datetime.datetime.now()), n_mc
 

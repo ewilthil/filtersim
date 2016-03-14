@@ -1,7 +1,7 @@
 import numpy as np
 import ipdb
 from base_classes import Sensor, pitopi
-from scipy.linalg import block_diag
+from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
 from estimators import KF, EKF
 from autopy.conversion import heading_to_matrix_2D
@@ -303,18 +303,26 @@ class DWNA_schmidt():
         self.time = time
         self.dt =  time[1]-time[0]
         self.N = len(time)
-        self.nx = 7
+        self.nx = 19
         self.nz = 2
-        self.estimate_init(self.nx, self.N)
-        self.est_prior[:,0] = np.hstack((est_init, np.zeros(3)))
-        self.cov_prior[:,:,0] = block_diag(cov_init, np.zeros((3,3)))
+        self.estimate_init()
+        self.est_prior[:,0] = np.hstack((est_init, np.zeros(15)))
+        self.cov_prior[:,:,0] = block_diag(cov_init, np.zeros((15,15)))
         Fsub = np.array([[1, self.dt],[0, 1]])
-        F = block_diag(Fsub, Fsub, np.identity(3))
+        self.F_t = block_diag(Fsub, Fsub)
+        F = block_diag(self.F_t, np.identity(15))
         f = lambda x : np.dot(F, x)
         self.R_polar = R_polar
-        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(3)), lambda x : block_diag(Q, np.zeros((3,3))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
+        self.track_cov = Q
+        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(15)), lambda x : block_diag(Q, np.zeros((15,15))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
 
-    def step(self, radar_measurement, ownship_pose, ownship_cov, k):
+    def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q):
+        self.filter.est_posterior[4:] = np.zeros(15)
+        self.filter.cov_posterior[4:,4:] = ownship_cov
+        Phi = expm(self.dt*F)
+        Q = self.dt*np.dot(Phi,np.dot(Q,Phi.T))
+        self.filter.F = lambda x : block_diag(self.F_t, np.identity(15))
+        self.filter.Q = lambda x : block_diag(self.track_cov, Q)
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
         self.filter.cov_prior[4:,4:] = ownship_cov
@@ -323,36 +331,36 @@ class DWNA_schmidt():
         self.filter.R = self.R_polar
         self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(radar_measurement)
 
-    def estimate_init(self, nx, N):
-        self.est_posterior = np.zeros((nx, N))
-        self.cov_posterior = np.zeros((nx, nx, N))
-        self.est_prior = np.zeros((nx, N))
-        self.cov_prior = np.zeros((nx, nx, N))
+    def estimate_init(self):
+        self.est_posterior = np.zeros((self.nx, self.N))
+        self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
+        self.est_prior = np.zeros((self.nx, self.N))
+        self.cov_prior = np.zeros((self.nx, self.nx, self.N))
 
-    def measurement(self, target_state, ownship_state):
+    def measurement(self, target_state, ownship_pose):
         target_pos = np.hstack((target_state[0], target_state[2]))
-        R = np.linalg.norm(target_pos-ownship_state[:2])
-        theta = np.arctan2(target_pos[1]-ownship_state[1], target_pos[0]-ownship_state[0])-ownship_state[2]
+        R = np.linalg.norm(target_pos-ownship_pose[:2])
+        theta = np.arctan2(target_pos[1]-ownship_pose[1], target_pos[0]-ownship_pose[0])-ownship_pose[2]
         return np.hstack((R, pitopi(theta)))
     
-    def measurement_jacobian(self, target_state, ownship_state):
+    def measurement_jacobian(self, target_state, ownship_pose):
         target_pos = np.hstack((target_state[0], target_state[2]))
-        R = np.linalg.norm(target_pos-ownship_state[:2])
+        R = np.linalg.norm(target_pos-ownship_pose[:2])
         H = np.zeros((self.nz, 4))
-        H[0,0] = (target_pos[0]-ownship_state[0])/R
-        H[0,2] = (target_pos[1]-ownship_state[1])/R
-        H[1,0] = (ownship_state[1]-target_pos[1])/R**2
-        H[1,2] = (target_pos[0]-ownship_state[0])/R**2
+        H[0,0] = (target_pos[0]-ownship_pose[0])/R
+        H[0,2] = (target_pos[1]-ownship_pose[1])/R
+        H[1,0] = (ownship_pose[1]-target_pos[1])/R**2
+        H[1,2] = (target_pos[0]-ownship_pose[0])/R**2
         return H
 
     def ownship_measurement_jacobian(self, target_state, ownship_state):
-        H_o = np.zeros((2,3))
+        H_o = np.zeros((self.nz,15))
         target_pos = np.hstack((target_state[0], target_state[2]))
         R = np.linalg.norm(target_pos-ownship_state[:2])
-        H_o[0,0] = (ownship_state[0]-target_pos[0])/R
-        H_o[0,1] = (ownship_state[1]-target_pos[1])/R
-        H_o[1,0] = (target_pos[1]-ownship_state[1])/R**2
-        H_o[1,1] = (ownship_state[0]-target_pos[0])/R**2
+        H_o[0,6] = (ownship_state[0]-target_pos[0])/R
+        H_o[0,7] = (ownship_state[1]-target_pos[1])/R
+        H_o[1,6] = (target_pos[1]-ownship_state[1])/R**2
+        H_o[1,7] = (ownship_state[0]-target_pos[0])/R**2
         H_o[1,2] = -1
         return H_o
 

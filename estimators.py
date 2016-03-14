@@ -88,7 +88,7 @@ class EKF:
         H_k = self.H(self.est_prior)
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
-        K[4:,:] = np.zeros((15,2))
+        #K[4:,:] = np.zeros((9,2))
         self.measurement_prediction = self.h(self.est_prior)
         innovation = self.measurement-self.measurement_prediction
         innovation[1] = pitopi(innovation[1])

@@ -303,25 +303,25 @@ class DWNA_schmidt():
         self.time = time
         self.dt =  time[1]-time[0]
         self.N = len(time)
-        self.nx = 19
+        self.nx = 13
         self.nz = 2
         self.estimate_init()
-        self.est_prior[:,0] = np.hstack((est_init, np.zeros(15)))
-        self.cov_prior[:,:,0] = block_diag(cov_init, np.zeros((15,15)))
+        self.est_prior[:,0] = np.hstack((est_init, np.zeros(self.nx-4)))
+        self.cov_prior[:,:,0] = block_diag(cov_init, np.zeros((self.nx-4, self.nx-4)))
         Fsub = np.array([[1, self.dt],[0, 1]])
         self.F_t = block_diag(Fsub, Fsub)
-        F = block_diag(self.F_t, np.identity(15))
+        F = block_diag(self.F_t, np.identity(self.nx-4))
         f = lambda x : np.dot(F, x)
         self.R_polar = R_polar
         self.track_cov = Q
-        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(15)), lambda x : block_diag(Q, np.zeros((15,15))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
+        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(15)), lambda x : block_diag(Q, np.zeros((self.nx-4,self.nx-4))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
 
     def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q):
-        self.filter.est_posterior[4:] = np.zeros(15)
+        self.filter.est_posterior[4:] = np.zeros(self.nx-4)
         self.filter.cov_posterior[4:,4:] = ownship_cov
         Phi = expm(self.dt*F)
         Q = self.dt*np.dot(Phi,np.dot(Q,Phi.T))
-        self.filter.F = lambda x : block_diag(self.F_t, np.identity(15))
+        self.filter.F = lambda x : block_diag(self.F_t, np.identity(self.nx-4))
         self.filter.Q = lambda x : block_diag(self.track_cov, Q)
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
@@ -354,7 +354,7 @@ class DWNA_schmidt():
         return H
 
     def ownship_measurement_jacobian(self, target_state, ownship_state):
-        H_o = np.zeros((self.nz,15))
+        H_o = np.zeros((self.nz,self.nx-4))
         target_pos = np.hstack((target_state[0], target_state[2]))
         R = np.linalg.norm(target_pos-ownship_state[:2])
         H_o[0,6] = (ownship_state[0]-target_pos[0])/R

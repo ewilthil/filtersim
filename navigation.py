@@ -3,7 +3,7 @@ import autopy.conversion as conv
 from scipy.linalg import expm, block_diag
 from scipy.stats import multivariate_normal
 from estimators import EKF_navigation
-from tf.transformations import euler_matrix
+from tf.transformations import euler_matrix, quaternion_from_euler
 from base_classes import Sensor
 
 
@@ -25,22 +25,22 @@ def euler_to_matrix(ang):
 
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
-        self.acc_cov = 1e-3
-        self.gyr_cov = 1e-3
+        self.acc_cov = 1e-8
+        self.gyr_cov = 1e-8
         bias_init = np.array([0, 0, 0, 0, 0, 0])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
         self.IMU = Sensor(imu_measurement, bias_init, block_diag(self.acc_cov*np.identity(3), self.gyr_cov*np.identity(3)), imu_time)
-        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((np.pi/180)**2)*np.identity(4)), gps_time)
+        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((1e-2*np.pi/180)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
-        cov_init = np.zeros((15,15))
+        cov_init = np.zeros((9,9))
         cov_init[0:3,0:3] = (1*np.pi/180)**2*np.identity(3)
         cov_init[3:6,3:6] = 2**2*np.identity(3)
         cov_init[6:9,6:9] = 10**2*np.identity(3)
-        cov_init[9:15,9:15] = 1e-6*np.identity(6)
+        #cov_init[9:15,9:15] = 1e-6*np.identity(6)
 
-        self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(15), cov_init, gps_time)
-        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-9*np.identity(9))
+        self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(9), cov_init, gps_time)
+        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-9*np.identity(3))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]
@@ -51,9 +51,9 @@ class NavigationSystem:
         quat, _, pos, omega, spec_force = self.get_strapdown_estimate(k_imu)
         Phi, H, Q, F, Q_temp = self.calculate_jacobians(omega, spec_force, quat)
         z = self.GPS.data[:,k_gps]
-        z_est = np.hstack((self.strapdown.data[self.strapdown.pos,k_imu], self.strapdown.data[self.strapdown.orient,k_imu]))
+        z_est = np.hstack((pos, quat))
         error_state, error_cov = self.EKF.step(z, z_est, Phi, H, Q, k_gps)
-        self.strapdown.update_bias(error_state[9:12], error_state[12:15])
+        #self.strapdown.update_bias(error_state[9:12], error_state[12:15])
         self.strapdown.correct_estimates(error_state[0:3], error_state[3:6], error_state[6:9], k_imu)
         self.transform_covariance(k_gps)
         return F, Q_temp
@@ -61,18 +61,18 @@ class NavigationSystem:
     
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):
         C = conv.quat_to_rot(quat_est)
-        F = np.zeros((15,15))
-        F[0:3,12:15] = C
+        F = np.zeros((9,9))
+        #F[0:3,12:15] = C
         F[3:6,0:3] = -sksym(np.dot(C, spec_force_est))
-        F[3:6,9:12] = C
+        #F[3:6,9:12] = C
         F[6:9,3:6] = np.identity(3)
         Phi = expm(self.EKF.dt*F)
-        H = np.zeros((7,15))
+        H = np.zeros((7,9))
         H[0:3,6:9] = np.identity(3)
         H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
 
-        B = block_diag(C, C, np.zeros((9,9)))
-        Q_temp = np.zeros((15,15))
+        B = block_diag(C, C, np.zeros((3,3)))
+        Q_temp = np.zeros((9,9))
         Q_temp = np.dot(B, np.dot(self.Q_cont, B.T))
         Q = self.EKF.dt*np.dot(Phi,np.dot(Q_temp,Phi.T))
         return Phi, H, Q, F, Q_temp
@@ -85,7 +85,7 @@ class NavigationSystem:
         err_ang = self.EKF.est_posterior[0:3,k]
         err_cov = self.EKF.cov_posterior[:,:,k]
         G_ang = np.identity(3)-sksym(0.5*err_ang)
-        G = block_diag(G_ang, np.identity(12))
+        G = block_diag(G_ang, np.identity(6))
         self.EKF.cov_posterior[:,:,k] = np.dot(G,np.dot(err_cov,G.T))
 
 class Strapdown:
@@ -124,7 +124,7 @@ class Strapdown:
         T = 0.5*np.vstack((np.array(qw*np.eye(3)+sksym(qv)),-qv))
         #self.data[self.orient,k] = q_prev + self.dt*np.dot(T, ang_rate)
         self.data[self.orient,k] = conv.quat_mul(q_prev, quat_inc)
-        self.data[self.orient,k] = self.data[self.orient,k]/np.linalg.norm(self.data[self.orient,k])
+        #self.data[self.orient,k] = self.data[self.orient,k]/np.linalg.norm(self.data[self.orient,k])
 
     def update_velocity(self, k):
         q = self.data[self.orient, k]

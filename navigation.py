@@ -11,36 +11,33 @@ gravity_n = np.array([0, 0, 9.81])
 def imu_measurement(state, state_diff):
     C = conv.euler_angles_to_matrix(state[3:6])
     return np.hstack((state_diff[6:9]-np.cross(state[6:9], state[9:12])-np.dot(C.T,gravity_n), state[9:12]))
+
 def gps_measurement(state):
     pos = state[0:3]
     quat = conv.euler_angles_to_quaternion(state[3:6])
     return np.hstack((pos, quat))
+
 def sksym(qv):
     return np.array([[0,-qv[2],qv[1]],[qv[2],0,-qv[0]],[-qv[1],qv[0],0]])
 
-def euler_to_matrix(ang):
-        phi, theta, psi = ang[0], ang[1], ang[2]
-        R = euler_matrix(psi, theta, phi, 'rzyx')
-        return R[0:3,0:3]
-
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
-        self.acc_cov = 1e-8
-        self.gyr_cov = 1e-8
+        self.acc_cov = 0.2**2
+        self.gyr_cov = np.deg2rad(0.02)**2
         bias_init = np.array([0, 0, 0, 0, 0, 0])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
         self.IMU = Sensor(imu_measurement, bias_init, block_diag(self.acc_cov*np.identity(3), self.gyr_cov*np.identity(3)), imu_time)
-        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag(4*np.identity(3), ((1e-2*np.pi/180)**2)*np.identity(4)), gps_time)
+        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag((5**2)*np.identity(3), (np.deg2rad(1e0)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((9,9))
         cov_init[0:3,0:3] = (1*np.pi/180)**2*np.identity(3)
-        cov_init[3:6,3:6] = 2**2*np.identity(3)
-        cov_init[6:9,6:9] = 10**2*np.identity(3)
+        cov_init[3:6,3:6] = 1**2*np.identity(3)
+        cov_init[6:9,6:9] = 1**2*np.identity(3)
         #cov_init[9:15,9:15] = 1e-6*np.identity(6)
 
         self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(9), cov_init, gps_time)
-        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-9*np.identity(3))
+        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-6*np.identity(3))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]
@@ -71,10 +68,8 @@ class NavigationSystem:
         H[0:3,6:9] = np.identity(3)
         H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
 
-        B = block_diag(C, C, np.zeros((3,3)))
-        Q_temp = np.zeros((9,9))
-        Q_temp = np.dot(B, np.dot(self.Q_cont, B.T))
-        Q = self.EKF.dt*np.dot(Phi,np.dot(Q_temp,Phi.T))
+        B = block_diag(C, C, np.identity(3))
+        Q, Q_temp = self.discretize_system(F, B, self.Q_cont)
         return Phi, H, Q, F, Q_temp
 
     def get_strapdown_estimate(self, k_imu):
@@ -84,9 +79,22 @@ class NavigationSystem:
     def transform_covariance(self, k):
         err_ang = self.EKF.est_posterior[0:3,k]
         err_cov = self.EKF.cov_posterior[:,:,k]
-        G_ang = np.identity(3)-sksym(0.5*err_ang)
+        G_ang = np.identity(3)+sksym(0.5*err_ang)
         G = block_diag(G_ang, np.identity(6))
         self.EKF.cov_posterior[:,:,k] = np.dot(G,np.dot(err_cov,G.T))
+
+    def discretize_system(self, F, B, Q):
+        Qc = np.dot(B, np.dot(Q, B.T))
+        row1 = np.hstack((-F, Qc))
+        row2 = np.hstack((np.zeros_like(F), F.T))
+        exp_arg = np.vstack((row1, row2))
+        Loan2 = expm(exp_arg*self.EKF.dt)
+        G2 = Loan2[:F.shape[0],F.shape[0]:]
+        F3 = Loan2[F.shape[0]:,F.shape[0]:]
+        A = np.dot(F3.T,G2)
+        Q_out = 0.5*(A+A.T)
+        return Q_out, Qc
+
 
 class Strapdown:
     def __init__(self, q0, v0, p0, time_vec):

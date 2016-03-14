@@ -27,7 +27,10 @@ class EKF_navigation:
         S = np.dot(H,np.dot(self.cov_prior[:,:,k],H.T))+self.R
         K = np.dot(self.cov_prior[:,:,k], np.dot(H.T, np.linalg.inv(S)))
         self.est_posterior[:,k] = np.dot(K,z-z_est)
-        self.cov_posterior[:,:,k] = self.cov_prior[:,:,k] - np.dot(self.cov_prior[:,:,k],np.dot(H.T,np.dot(np.linalg.inv(S),np.dot(H,self.cov_prior[:,:,k]))))
+        #self.cov_posterior[:,:,k] = self.cov_prior[:,:,k] - np.dot(self.cov_prior[:,:,k],np.dot(H.T,np.dot(np.linalg.inv(S),np.dot(H,self.cov_prior[:,:,k]))))
+        hea = np.identity(F.shape[0])-np.dot(K,self.H[:,:,k])
+        cov = np.dot(hea, np.dot(self.cov_prior[:,:,k], hea.T))+np.dot(K, np.dot(self.R, K.T))
+        self.cov_posterior[:,:,k] = cov
         return self.est_posterior[:,k], self.cov_posterior[:,:,k]
 
 class KF:

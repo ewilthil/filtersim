@@ -96,8 +96,8 @@ for n_mc in range(N_MC):
             cov_ang = navsys.EKF.cov_posterior[:3,:3,k_gps]
             cov_vel = navsys.EKF.cov_posterior[3:6,3:6,k_gps]
             cov_pos = navsys.EKF.cov_posterior[6:9,6:9,k_gps]
-            cov_acc = navsys.EKF.cov_posterior[9:12,9:12,k_gps]
-            cov_gyr = navsys.EKF.cov_posterior[12:,12:,k_gps]
+            #cov_acc = navsys.EKF.cov_posterior[9:12,9:12,k_gps]
+            #cov_gyr = navsys.EKF.cov_posterior[12:,12:,k_gps]
             cov_all = navsys.EKF.cov_posterior[:9,:9,k_gps]
             nav_errs[0].update_vals(true_ang_err, est_ang_err, cov_ang, k_gps, n_mc)
             nav_errs[1].update_vals(true_vel_err, est_vel_err, cov_vel, k_gps, n_mc)
@@ -113,7 +113,7 @@ for n_mc in range(N_MC):
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             ground_truth_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
             navigation_cov = np.squeeze(navsys.EKF.cov_posterior[[[[6],[7],[2]]],[6,7,2], k_gps])
-            #navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
+            navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
             true_track_state = np.hstack((target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
             # The poses and covs match the order in tracker defined on the top
             poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose)

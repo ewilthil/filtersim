@@ -320,9 +320,9 @@ class DWNA_schmidt():
         self.filter.est_posterior[4:] = np.zeros(self.nx-4)
         self.filter.cov_posterior[4:,4:] = ownship_cov
         Phi = expm(self.dt*F)
-        Q = self.dt*np.dot(Phi,np.dot(Q,Phi.T))
-        self.filter.F = lambda x : block_diag(self.F_t, np.identity(self.nx-4))
-        self.filter.Q = lambda x : block_diag(self.track_cov, Q)
+        Qd = self.discretize_system(F, Q)
+        self.filter.F = lambda x : block_diag(self.F_t, Phi)#np.identity(self.nx-4))
+        self.filter.Q = lambda x : block_diag(self.track_cov, Qd)
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
         self.filter.cov_prior[4:,4:] = ownship_cov
@@ -330,6 +330,17 @@ class DWNA_schmidt():
         self.filter.H = lambda x : np.hstack((self.measurement_jacobian(x, ownship_pose), self.ownship_measurement_jacobian(x, ownship_pose)))
         self.filter.R = self.R_polar
         self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(radar_measurement)
+
+    def discretize_system(self, F ,Q):
+        row1 = np.hstack((-F, Q))
+        row2 = np.hstack((np.zeros_like(F), F.T))
+        exp_arg = np.vstack((row1, row2))
+        Loan2 = expm(exp_arg*self.dt)
+        G2 = Loan2[:F.shape[0],F.shape[0]:]
+        F3 = Loan2[F.shape[0]:,F.shape[0]:]
+        A = np.dot(F3.T,G2)
+        Q_out = 0.5*(A+A.T)
+        return Q_out
 
     def estimate_init(self):
         self.est_posterior = np.zeros((self.nx, self.N))

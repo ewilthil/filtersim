@@ -11,7 +11,7 @@ from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
 plt.close('all')
 
-N_MC = 10
+N_MC = 20
 target = load_pkl('target_straight.pkl')
 ownship = load_pkl('ownship_straight.pkl')
 time = ownship.time

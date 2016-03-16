@@ -109,12 +109,12 @@ def plot_xy_trajectory(ax, xdata, ydata, args):
 # Target tracking
 def target_xy(target, est, ax, args):
     ax.plot(target.state[1,:], target.state[0,:], 'k')
-    ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], **args)
+    plot = ax.plot(est.est_posterior[2,:], est.est_posterior[0,:], **args)
     cov = est.cov_posterior[[[2],[0]],[2,0],:] # pick out E and N elements
     inds = np.arange(0, len(est.time)+1, len(est.time)/15)
     for k in inds:
         el = get_ellipse(est.est_posterior[[2,0],k], cov[:,:,k], gamma=6)
-        el.set_color(args['color'])
+        el.set_color(plot[0].get_color())
         ax.add_artist(el)
     ax.set_aspect('equal')
 
@@ -125,6 +125,12 @@ def target_velocity(target, est, ax, args):
     ax[1].plot(target.time, target.state_diff[1,:], 'k', label='True state')
     ax[1].errorbar(est.time, est.est_posterior[3,:], yerr=2*np.sqrt(np.squeeze(est.cov_posterior[3,3,:])), errorevery=len(est.time)/30, **args)
     ax[1].set_title('East velocity')
+
+def target_velocity_error(target, est, ax, args):
+    ax[0].plot(est.time, target.state_diff[0,0::100]-est.est_posterior[1,:], **args)
+    ax[0].set_title('North velocity error')
+    ax[1].plot(est.time, target.state_diff[1,0::100]-est.est_posterior[3,:], **args)
+    ax[1].set_title('East velocity error')
 
 
 def target_angular_rate(target, imm, ax, args):

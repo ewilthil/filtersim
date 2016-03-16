@@ -28,16 +28,15 @@ class NavigationSystem:
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)
         self.IMU = Sensor(imu_measurement, bias_init, block_diag(self.acc_cov*np.identity(3), self.gyr_cov*np.identity(3)), imu_time)
-        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag((2**2)*np.identity(3), (np.deg2rad(2e0)**2)*np.identity(4)), gps_time)
+        self.GPS = Sensor(gps_measurement, np.zeros(7), block_diag((3**2)*np.identity(3), (np.deg2rad(3e0)**2)*np.identity(4)), gps_time)
         self.strapdown = Strapdown(q0, v0, p0, imu_time)
         cov_init = np.zeros((9,9))
         cov_init[0:3,0:3] = (1*np.pi/180)**2*np.identity(3)
         cov_init[3:6,3:6] = 1**2*np.identity(3)
         cov_init[6:9,6:9] = 1**2*np.identity(3)
         #cov_init[9:15,9:15] = 1e-6*np.identity(6)
-
         self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(9), cov_init, gps_time)
-        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), np.identity(3))
+        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 0*np.identity(3))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]
@@ -68,7 +67,7 @@ class NavigationSystem:
         H[0:3,6:9] = np.identity(3)
         H[3:7,0:3] = 0.5*np.vstack((quat_est[3]*np.identity(3)+sksym(quat_est[0:3]),-quat_est[0:3]))
 
-        B = block_diag(C, C, np.identity(3))
+        B = block_diag(C, C, 0*np.identity(3))
         Q, Q_temp = self.discretize_system(F, B, self.Q_cont)
         return Phi, H, Q, F, Q_temp
 

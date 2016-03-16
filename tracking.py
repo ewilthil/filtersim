@@ -4,10 +4,14 @@ from base_classes import Sensor, pitopi
 from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
 from estimators import KF, EKF
-from autopy.conversion import heading_to_matrix_2D
+import autopy.conversion as conv
 
 def polar_to_cartesian(z):
     return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])
+
+def sksym(qv):
+    return np.array([[0,-qv[2],qv[1]],[qv[2],0,-qv[0]],[-qv[1],qv[0],0]])
+
 class IMM:
     def __init__(self, P_in, time, sigmas, state_init, cov_init, prob_init, R_polar, model_names, extra_args):
         self.time = time
@@ -120,6 +124,7 @@ class TrackingFilter:
         self.R_polar = R_polar
         self.measurement_innovation = np.zeros((2, self.N))
         self.measurement_innovation_covariance = np.zeros((2,2,self.N))
+        self.K_gains = np.zeros((2,self.N))
 
     def step(self, measurement, pose=np.zeros(3), cov = np.zeros((3,3)), k=10):
         self.update_sensor_pose(pose, cov)
@@ -128,7 +133,7 @@ class TrackingFilter:
         self.filter.R = cov_meas
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
-        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(pos_meas)
+        self.est_posterior[:,k], self.cov_posterior[:,:,k], self.K_gains[:,k] = self.filter.step_filter(pos_meas)
         return self.est_posterior[:,k], self.cov_posterior[:,:,k]
 
     def convert_measurement(self, measurement):
@@ -164,7 +169,7 @@ class TrackingFilter:
         R_12 = sin_ang*cos_ang*np.exp(-4*cov_ang)*(cov_range+(range_measure**2+cov_range)*(1-np.exp(cov_ang)))
         pos_local = np.array([x,y])
         cov_local = np.array([[R_11, R_12],[R_12,R_22]])
-        pos_global = self.pose[0:2]+np.dot(heading_to_matrix_2D(self.pose[2]), pos_local)
+        pos_global = self.pose[0:2]+np.dot(conv.heading_to_matrix_2D(self.pose[2]), pos_local)
         cov_global = cov_local
         return pos_global, cov_global
 
@@ -314,22 +319,25 @@ class DWNA_schmidt():
         f = lambda x : np.dot(F, x)
         self.R_polar = R_polar
         self.track_cov = Q
-        self.filter = EKF(f, lambda x : self.measurement(x, np.zeros(15)), lambda x : block_diag(Q, np.zeros((self.nx-4,self.nx-4))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
+        self.K_gains = np.zeros((2,self.N))
+        self.filter = EKF(f, lambda x : self.measurement_full2(x), lambda x : block_diag(Q, np.zeros((self.nx-4,self.nx-4))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
 
-    def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q):
+    def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q, full_state):
+        self.quat = full_state[:4]
+        self.vel = full_state[4:7]
+        self.pos = full_state[7:]
         self.filter.est_posterior[4:] = np.zeros(self.nx-4)
         self.filter.cov_posterior[4:,4:] = ownship_cov
         Phi = expm(self.dt*F)
         Qd = self.discretize_system(F, Q)
-        self.filter.F = lambda x : block_diag(self.F_t, Phi)#np.identity(self.nx-4))
+        self.filter.f = lambda x : np.dot(block_diag(self.F_t, Phi), x)
+        self.filter.F = lambda x : block_diag(self.F_t, Phi)
         self.filter.Q = lambda x : block_diag(self.track_cov, Qd)
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
-        self.filter.cov_prior[4:,4:] = ownship_cov
-        self.filter.h = lambda x : self.measurement(x, ownship_pose)
-        self.filter.H = lambda x : np.hstack((self.measurement_jacobian(x, ownship_pose), self.ownship_measurement_jacobian(x, ownship_pose)))
-        self.filter.R = self.R_polar
-        self.est_posterior[:,k], self.cov_posterior[:,:,k] = self.filter.step_filter(radar_measurement)
+        self.filter.h = lambda x : self.measurement_full2(x)
+        self.filter.H = lambda x : numerical_jacobian(x, self.measurement_full2)
+        self.est_posterior[:,k], self.cov_posterior[:,:,k], self.K_gains[:,k] = self.filter.step_filter(radar_measurement)
 
     def discretize_system(self, F ,Q):
         row1 = np.hstack((-F, Q))
@@ -348,20 +356,42 @@ class DWNA_schmidt():
         self.est_prior = np.zeros((self.nx, self.N))
         self.cov_prior = np.zeros((self.nx, self.nx, self.N))
 
-    def measurement(self, target_state, ownship_pose):
+    def measurement(self, target_state, ownship_state):
         target_pos = np.hstack((target_state[0], target_state[2]))
-        R = np.linalg.norm(target_pos-ownship_pose[:2])
-        theta = np.arctan2(target_pos[1]-ownship_pose[1], target_pos[0]-ownship_pose[0])-ownship_pose[2]
+        R = np.linalg.norm(target_pos-ownship_state[:2])
+        theta = np.arctan2(target_pos[1]-ownship_state[1], target_pos[0]-ownship_state[0])-ownship_state[2]
         return np.hstack((R, pitopi(theta)))
-    
+
+    def measurement_full(self, x):
+        x_t = x[:4]
+        quat = x[4:8]
+        euler_angs = conv.quaternion_to_euler_angles(quat)
+        vel = x[8:11]
+        pos = x[11:]
+        dist = np.sqrt((x_t[0]-pos[0])**2+(x_t[2]-pos[1])**2)
+        bearing = pitopi(np.arctan2(x_t[2]-pos[1],x_t[0]-pos[0])-euler_angs[2])
+        return np.hstack((dist, bearing))
+
+    def measurement_full2(self, x):
+        quat = self.quat
+        vel = self.vel
+        pos = self.pos
+        quat_est = conv.quat_mul(np.hstack((x[4:7]/2, 1)), quat)
+        euler_angs = conv.quaternion_to_euler_angles(quat_est)
+        dist = np.sqrt((x[0]-pos[0]-x[10])**2+(x[2]-pos[1]-x[11])**2)
+        bearing = np.arctan2(x[2]-pos[1]-x[11],x[0]-pos[0]-x[10])-euler_angs[2]
+        return np.hstack((dist, pitopi(bearing)))
+
+
     def measurement_jacobian(self, target_state, ownship_pose):
+        own_pos = ownship_pose[7:9]
         target_pos = np.hstack((target_state[0], target_state[2]))
-        R = np.linalg.norm(target_pos-ownship_pose[:2])
+        dist = np.linalg.norm(target_pos-own_pos[:2])
         H = np.zeros((self.nz, 4))
-        H[0,0] = (target_pos[0]-ownship_pose[0])/R
-        H[0,2] = (target_pos[1]-ownship_pose[1])/R
-        H[1,0] = (ownship_pose[1]-target_pos[1])/R**2
-        H[1,2] = (target_pos[0]-ownship_pose[0])/R**2
+        H[0,0] = (target_pos[0]-own_pos[0])/dist
+        H[0,2] = (target_pos[1]-own_pos[1])/dist
+        H[1,0] = (own_pos[1]-target_pos[1])/dist**2
+        H[1,2] = (target_pos[0]-own_pos[0])/dist**2
         return H
 
     def ownship_measurement_jacobian(self, target_state, ownship_state):
@@ -374,5 +404,63 @@ class DWNA_schmidt():
         H_o[1,7] = (ownship_state[0]-target_pos[0])/R**2
         H_o[1,2] = -1
         return H_o
+    
+    def ownship_error_jacobian(self, quat):
+        H_dx = np.zeros((10,9))
+        H_dx[0:4,0:3] = 0.5*np.vstack((quat[3]*np.identity(3)-sksym(quat[0:3]),-quat[0:3]))
+        H_dx[4:,3:] = np.identity(6)
+        return H_dx
+
+def numerical_jacobian(x, h, epsilon=10**-7):
+    """
+    Calculate a Jacobian from h at x numerically using finite difference
+    """
+    x_dim = x.size
+    h0 = h(x)
+    h_dim = h0.size
+    H = np.zeros((h_dim, x_dim))
+    for i in range(x_dim):
+        direction = np.zeros(x_dim)
+        direction[i] = 1
+        pert = epsilon*direction
+        h_pert = h(x + pert)
+        H[:,i] = (h_pert - h0)/epsilon
+    return H
+
+class DWNA_nocomp():
+    def __init__(self, time, Q, R_polar, est_init, cov_init):
+        self.time = time
+        self.dt =  time[1]-time[0]
+        self.N = len(time)
+        self.nx = 4
+        self.nz = 2
+        self.estimate_init()
+        self.est_prior[:,0] = est_init
+        self.cov_prior[:,:,0] = cov_init
+        Fsub = np.array([[1, self.dt],[0, 1]])
+        self.F_t = block_diag(Fsub, Fsub)
+        self.R_polar = R_polar
+        self.track_cov = Q
+        self.K_gains = np.zeros((2,self.N))
+        H = lambda x : numerical_jacobian(x, self.measurement_full2)
+        self.filter = EKF(lambda x : np.dot(self.F_t,x), lambda x : self.measurement_full2(x), lambda x : Q, R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : self.F_t, H)
+
+    def step(self, measurement, pose=np.zeros(3), cov = np.zeros((3,3)), k=10):
+        self.heading = pose[2]
+        self.pos = pose[:2]
+        if k > 0:
+            self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
+        self.est_posterior[:,k], self.cov_posterior[:,:,k], self.K_gains[:,k] = self.filter.step_filter(measurement)
+
+    def estimate_init(self):
+        self.est_posterior = np.zeros((self.nx, self.N))
+        self.cov_posterior = np.zeros((self.nx, self.nx, self.N))
+        self.est_prior = np.zeros((self.nx, self.N))
+        self.cov_prior = np.zeros((self.nx, self.nx, self.N))
+
+    def measurement_full2(self, x):
+        dist = np.sqrt((x[0]-self.pos[0])**2+(x[2]-self.pos[1])**2)
+        bearing = np.arctan2(x[2]-self.pos[1],x[0]-self.pos[0])-self.heading
+        return np.hstack((dist, pitopi(bearing)))
 
 model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

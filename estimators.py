@@ -53,11 +53,13 @@ class KF:
         self.measurement = measurement
         self.S = np.dot(self.H, np.dot(self.cov_prior, self.H.T))+self.R
         K = np.dot(self.cov_prior, np.dot(self.H.T, np.linalg.inv(self.S)))
+        K_pos = np.linalg.norm(np.vstack((np.linalg.norm(K[0,:]), np.linalg.norm(K[2,:]))))
+        K_vel = np.linalg.norm(np.vstack((np.linalg.norm(K[1,:]), np.linalg.norm(K[3,:]))))
         self.measurement_prediction = np.dot(self.H, self.est_prior)
         self.est_posterior = self.est_prior+np.dot(K, measurement-self.measurement_prediction)
         cov = np.dot(np.identity(self.F.shape[0])-np.dot(K, self.H), self.cov_prior)
         self.cov_posterior = 0.5*(cov+cov.T)
-        return self.est_posterior, self.cov_posterior
+        return self.est_posterior, self.cov_posterior, np.array([K_pos, K_vel])
 
 class EKF:
     def __init__(self, f, h, Q, R, est_init, cov_init, F=None, H=None):
@@ -91,14 +93,28 @@ class EKF:
         H_k = self.H(self.est_prior)
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
+
+        
+        #C = self.cov_prior[:4,4:]
+        #B = self.cov_prior[4:,4:]
         #K[4:,:] = np.zeros((9,2))
+        #Kb = K[4:,:]
+        #H = H_k[:,:4]
+        #Hb = H_k[:,4:]
+        K_pos = np.linalg.norm(np.vstack((np.linalg.norm(K[0,0]), np.linalg.norm(K[2,0]))))
+        K_vel = np.linalg.norm(np.vstack((np.linalg.norm(K[1,0]), np.linalg.norm(K[3,0]))))
+
+
         self.measurement_prediction = self.h(self.est_prior)
         innovation = self.measurement-self.measurement_prediction
         innovation[1] = pitopi(innovation[1])
         self.est_posterior = self.est_prior+np.dot(K, innovation)
+        self.est_posterior[4:] = np.zeros(9)
         nx = len(self.est_posterior)
         hea = np.identity(nx)-np.dot(K,H_k)
         cov = np.dot(hea, np.dot(self.cov_prior, hea.T))+np.dot(K, np.dot(self.R, K.T))
-        #cov = np.dot(np.identity(self.F(self.est_prior).shape[0])-np.dot(K, H_k), self.cov_prior)
+        #cov = np.dot(np.identity(nx)-np.dot(K, H_k), self.cov_prior)
+        #cov[4:,:4] = cov[:4,4:].T
+        #cov[:4,4:] = cov[4:,:4].T
         self.cov_posterior = 0.5*(cov+cov.T)
-        return self.est_posterior, self.cov_posterior
+        return self.est_posterior, self.cov_posterior, np.array([K_pos, K_vel])

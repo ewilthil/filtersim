@@ -11,7 +11,7 @@ from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
 plt.close('all')
 
-N_MC = 20
+N_MC = 10
 target = load_pkl('target_straight.pkl')
 ownship = load_pkl('ownship_straight.pkl')
 time = ownship.time
@@ -31,7 +31,7 @@ v0 = ownship.state_diff[0:3,0]
 p0 = ownship.state[0:3,0]
 track_state_init = np.hstack((target.state[0,0], target.state_diff[0,0], target.state[1,0], target.state_diff[1,0]))
 # Covariances
-cov_radar = np.diag((20**2, (0.5*np.pi/180)**2))
+cov_radar = np.diag((50**2, (1*np.pi/180)**2))
 track_cov_init = np.diag((5**2, 1**2, 5**2, 1**2))
 acc_cov = 1**2
 Q_sub = np.array([[radar_dt**4/4, radar_dt**3/2],[radar_dt**3/2, radar_dt**2]])
@@ -43,6 +43,7 @@ schmidt_args = {'color' : 'g', 'label': 'Schmidt', 'linestyle' : '-'}
 ground_truth_args = {'color' : 'b', 'label' : 'Ground truth pose'}
 uncomp_args = {'color' : 'r', 'label' : 'Uncompensated', 'linestyle' : '-'}
 conv_meas_args = {'color' : 'y', 'label' : 'Converted measurement'}
+ucomp_ekf_args = {'color' : 'm', 'label' : 'EKF ucomp'}
 arg = (ground_truth_args, uncomp_args, schmidt_args, conv_meas_args)
 errs = ()
 # Error statistics
@@ -64,7 +65,6 @@ for a in nav_args:
 #uncomp_errs = ErrorStats(radar_time, N_MC, uncomp_args)
 #conv_meas_errs = ErrorStats(radar_time, N_MC, conv_meas_args)
 # Group up
-print str(datetime.datetime.now())
 for n_mc in range(N_MC):
     # (re)initialize instances
     navsys = nav.NavigationSystem(q0, v0, p0, imu_time, gps_time)
@@ -74,6 +74,7 @@ for n_mc in range(N_MC):
     ground_truth = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     uncompensated_tracker = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     conv_meas = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
+    uncomp_EKF = track.DWNA_nocomp(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     trackers = (ground_truth, uncompensated_tracker, schmidt, conv_meas)
 
     
@@ -113,39 +114,73 @@ for n_mc in range(N_MC):
             navigation_pose = np.hstack((nav_pos[0:2], nav_eul[2]))
             ground_truth_pose = np.hstack((ownship.state[0:2,k], ownship.state[5,k]))
             navigation_cov = np.squeeze(navsys.EKF.cov_posterior[[[[6],[7],[2]]],[6,7,2], k_gps])
-            navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
+            #navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
             true_track_state = np.hstack((target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
             # The poses and covs match the order in tracker defined on the top
             poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose)
             covs = (np.zeros((3,3)), np.zeros((3,3)), navsys.EKF.cov_posterior[:,:,k_gps], navigation_cov)
-            exargs = ({}, {}, {'F' : F_ownship, 'Q' : Q_ownship}, {})
+            est_quat, est_vel, est_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
+            exargs = ({}, {}, {'F' : F_ownship, 'Q' : Q_ownship, 'full_state' : np.hstack((est_quat, est_vel, est_pos))}, {})
             # Step the tracking filters
             for j, tracker in enumerate(trackers):
                 tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar, **exargs[j])
                 errs[j].update_vals(true_track_state, tracker.est_posterior[:4,k_radar], tracker.cov_posterior[:4,:4,k_radar], k_radar, n_mc)
-    print str(datetime.datetime.now()), n_mc
+    print str(datetime.datetime.now()), n_mc+1, '/', N_MC
 
+mark_every = 10
+marker_size=5
+ground_truth_style = {'label' : 'Ground truth', 'marker' : 'o', 'markevery' : mark_every, 'ms' : marker_size}
+schmidt_style = {'label' : 'Schmidt', 'marker' : 's', 'markevery' : mark_every, 'ms' : marker_size}
+uncomp_style = {'label' : 'Uncompensated', 'marker' : 'v', 'markevery' : mark_every, 'ms' : marker_size}
+conv_style = {'label' : 'Converted measurement', 'marker' : 'h', 'markevery' : mark_every, 'ms' : marker_size}
+hea = (ground_truth_style, uncomp_style, schmidt_style, conv_style)
+with plt.style.context(('filter')):
+    consistency_fig, consistency_ax = plt.subplots(3,1)
+    for err in errs:
+        err.plot_errors(consistency_ax[0], consistency_ax[1], consistency_ax[2])
+    consistency_ax[0].set_title('NEES for ' + str(N_MC) + ' Monte Carlo runs')
+    consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo runs')
+    consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
+    [consistency_ax[j].legend() for j in range(3)]
 
-consistency_fig, consistency_ax = plt.subplots(3,1)
-for err in errs:
-    err.plot_errors(consistency_ax[0], consistency_ax[1], consistency_ax[2])
-consistency_ax[0].set_title('NEES for ' + str(N_MC) + ' Monte Carlo runs')
-consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo runs')
-consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
-[consistency_ax[j].legend() for j in range(3)]
+    nav_consistency_fig, nav_consistency_ax = plt.subplots(3,1)
+    for err in nav_errs:
+        err.plot_errors(nav_consistency_ax[0], nav_consistency_ax[1], nav_consistency_ax[2])
+    nav_consistency_ax[0].set_title('NEES for ' + str(N_MC) + ' Monte Carlo runs')
+    nav_consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo runs')
+    nav_consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
+    [nav_consistency_ax[j].legend() for j in range(3)]
+    xy_fig, xy_ax = plt.subplots(1,1)
+    #xy_ax = xy_ax.reshape(4)
+    vel_fig, vel_ax = plt.subplots(2,1)
+    velerr_fig, velerr_ax = plt.subplots(2,1)
+    K_fig, K_ax = plt.subplots(2,1)
+    for j in range(len(arg)):
+        viz.target_xy(target, trackers[j], xy_ax, hea[j])
+        #viz.plot_xy_pos((ownship, ), xy_ax[j], own_arg)
+        xy_ax.set_xlim((300,1600))
+        xy_ax.set_ylim((2800,4000))
+        xy_ax.set_xlabel('East')
+        xy_ax.set_ylabel('North')
+        xy_ax.legend(loc=2)
+        viz.target_velocity(target, trackers[j], vel_ax, arg[j])
+        viz.target_velocity_error(target, trackers[j], velerr_ax, arg[j])
+        K_ax[0].plot(radar_time, trackers[j].K_gains[0,:], **arg[j])
+        K_ax[1].plot(radar_time, trackers[j].K_gains[1,:], **arg[j])
+        K_ax[0].legend()
 
-nav_consistency_fig, nav_consistency_ax = plt.subplots(3,1)
-for err in nav_errs:
-    err.plot_errors(nav_consistency_ax[0], nav_consistency_ax[1], nav_consistency_ax[2])
-nav_consistency_ax[0].set_title('NEES for ' + str(N_MC) + ' Monte Carlo runs')
-nav_consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo runs')
-nav_consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
-[nav_consistency_ax[j].legend() for j in range(3)]
-xy_fig, xy_ax = plt.subplots(2,2)
-xy_ax = xy_ax.reshape(4)
-vel_fig, vel_ax = plt.subplots(2,1)
-for j in range(len(arg)):
-    viz.target_xy(target, trackers[j], xy_ax[j], arg[j])
-    viz.plot_xy_pos((ownship, ), xy_ax[j], own_arg)
-    viz.target_velocity(target, trackers[j], vel_ax, arg[j])
-plt.show()
+    xy_2, xy_2ax = plt.subplots(1,1)
+    xy_2ax.plot(ownship.state[1,:], ownship.state[0,:], 'k--', label='Ownship')
+    xy_2ax.plot(target.state[1,:], target.state[0,:], 'k', label='Target')
+    xy_2ax.set_xlabel('East')
+    xy_2ax.set_ylabel('North')
+    xy_2ax.legend(loc=2)
+    #plt.figure(xy_fig.number)
+    head_fig, head_ax = plt.subplots(1,1)
+    est_quat = navsys.strapdown.data[navsys.strapdown.orient, :]
+    est_eul = conv.quaternion_to_euler_angles(est_quat.T).T
+    head_ax.plot(ownship.time, ownship.state[5,:], 'k', label='True heading')
+    head_ax.errorbar(navsys.EKF.time, est_eul[2,0::20], yerr=3*np.sqrt(np.squeeze(navsys.EKF.cov_posterior[2,2,:])),errorevery=10)
+    plt.savefig('hea.pdf')
+    plt.show()
+

@@ -322,12 +322,15 @@ class DWNA_schmidt():
         self.K_gains = np.zeros((2,self.N))
         self.filter = EKF(f, lambda x : self.measurement_full2(x), lambda x : block_diag(Q, np.zeros((self.nx-4,self.nx-4))), R_polar, self.est_prior[:,0], self.cov_prior[:,:,0], lambda x : F, H=np.hstack((self.measurement_jacobian, self.ownship_measurement_jacobian)))
 
-    def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q, full_state):
+    def step(self, radar_measurement, ownship_pose, ownship_cov, k, F, Q, full_state, reset_xcor=False):
         self.quat = full_state[:4]
         self.vel = full_state[4:7]
         self.pos = full_state[7:]
         self.filter.est_posterior[4:] = np.zeros(self.nx-4)
-        self.filter.cov_posterior[4:,4:] = ownship_cov
+        prev_post = np.zeros((13,13))
+        if reset_xcor:
+            self.filter.cov_posterior[4:,:4] = np.zeros((9,4))
+            self.filter.cov_posterior[:4,4:] = np.zeros((4,9))
         Phi = expm(self.dt*F)
         Qd = self.discretize_system(F, Q)
         self.filter.f = lambda x : np.dot(block_diag(self.F_t, Phi), x)
@@ -335,6 +338,20 @@ class DWNA_schmidt():
         self.filter.Q = lambda x : block_diag(self.track_cov, Qd)
         if k > 0:
             self.est_prior[:,k], self.cov_prior[:,:,k] = self.filter.step_markov()
+        #self.filter.cov_posterior[4:,4:] = ownship_cov
+        prev_post[:,:] = self.filter.cov_prior[:,:]
+        #self.filter.cov_prior[4:,4:] = ownship_cov
+        # Pseudomeasurement update
+        H_nav = np.hstack((np.zeros((9,4)), np.identity(9)))
+        S_nav = np.dot(H_nav, np.dot(self.filter.cov_prior, H_nav.T))+ownship_cov
+        K_nav = np.dot(self.filter.cov_prior, np.dot(H_nav.T, np.linalg.inv(S_nav)))
+        self.filter.cov_prior = np.dot(np.identity(13)-np.dot(K_nav, H_nav), self.filter.cov_prior)
+
+
+        if np.min(np.linalg.eig(self.filter.cov_prior)[0]) < 0:
+                ipdb.set_trace()
+
+
         self.filter.h = lambda x : self.measurement_full2(x)
         self.filter.H = lambda x : numerical_jacobian(x, self.measurement_full2)
         self.est_posterior[:,k], self.cov_posterior[:,:,k], self.K_gains[:,k] = self.filter.step_filter(radar_measurement)

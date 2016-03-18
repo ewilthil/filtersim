@@ -22,8 +22,8 @@ def sksym(qv):
 
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
-        self.acc_cov = 0.4**2
-        self.gyr_cov = np.deg2rad(0.08)**2
+        self.acc_cov = 2**2
+        self.gyr_cov = np.deg2rad(0.2)**2
         bias_init = np.array([0, 0, 0, 0, 0, 0])
         self.K_imu = len(imu_time)
         self.K_gps = len(gps_time)

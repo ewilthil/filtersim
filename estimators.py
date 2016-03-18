@@ -1,4 +1,5 @@
 import numpy as np
+import ipdb
 from base_classes import pitopi
 class EKF_navigation:
     def __init__(self, f, h, R, est_init, cov_init, time, F=None, H=None):
@@ -109,12 +110,17 @@ class EKF:
         innovation = self.measurement-self.measurement_prediction
         innovation[1] = pitopi(innovation[1])
         self.est_posterior = self.est_prior+np.dot(K, innovation)
-        self.est_posterior[4:] = np.zeros(9)
+        #self.est_posterior[4:] = np.zeros(9)
         nx = len(self.est_posterior)
         hea = np.identity(nx)-np.dot(K,H_k)
         cov = np.dot(hea, np.dot(self.cov_prior, hea.T))+np.dot(K, np.dot(self.R, K.T))
+        if np.min(np.linalg.eig(cov)[0]) < 0:
+            ipdb.set_trace()
         #cov = np.dot(np.identity(nx)-np.dot(K, H_k), self.cov_prior)
         #cov[4:,:4] = cov[:4,4:].T
         #cov[:4,4:] = cov[4:,:4].T
-        self.cov_posterior = 0.5*(cov+cov.T)
+        self.cov_posterior = cov#0.5*(cov+cov.T)
+        #print np.linalg.eig(cov)[0]
+        #print np.linalg.eig(self.cov_posterior)[0]
+        #print '-----------------------' 
         return self.est_posterior, self.cov_posterior, np.array([K_pos, K_vel])

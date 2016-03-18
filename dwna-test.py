@@ -33,7 +33,7 @@ track_state_init = np.hstack((target.state[0,0], target.state_diff[0,0], target.
 # Covariances
 cov_radar = np.diag((50**2, (1*np.pi/180)**2))
 track_cov_init = np.diag((5**2, 1**2, 5**2, 1**2))
-acc_cov = 1**2
+acc_cov = 0.5**2
 Q_sub = np.array([[radar_dt**4/4, radar_dt**3/2],[radar_dt**3/2, radar_dt**2]])
 Q_DWNA = acc_cov*block_diag(Q_sub, Q_sub)
 
@@ -44,7 +44,8 @@ ground_truth_args = {'color' : 'b', 'label' : 'Ground truth pose'}
 uncomp_args = {'color' : 'r', 'label' : 'Uncompensated', 'linestyle' : '-'}
 conv_meas_args = {'color' : 'y', 'label' : 'Converted measurement'}
 ucomp_ekf_args = {'color' : 'm', 'label' : 'EKF ucomp'}
-arg = (ground_truth_args, uncomp_args, schmidt_args, conv_meas_args)
+reset_ekf_args = {'color' : 'c', 'label' : 'EKF reset xcor'}
+arg = (ground_truth_args, uncomp_args, schmidt_args, conv_meas_args, ucomp_ekf_args, reset_ekf_args)
 errs = ()
 # Error statistics
 for a in arg:
@@ -75,7 +76,8 @@ for n_mc in range(N_MC):
     uncompensated_tracker = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     conv_meas = track.DWNA_filter(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     uncomp_EKF = track.DWNA_nocomp(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
-    trackers = (ground_truth, uncompensated_tracker, schmidt, conv_meas)
+    reset_EKF = track.DWNA_schmidt(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
+    trackers = (ground_truth, uncompensated_tracker, schmidt, conv_meas, uncomp_EKF, reset_EKF)
 
     
     # run the navigation and tracking filters
@@ -117,10 +119,10 @@ for n_mc in range(N_MC):
             #navigation_pose = ground_truth_pose+multivariate_normal(cov=navigation_cov).rvs()
             true_track_state = np.hstack((target.state[0,k], target.state_diff[0,k], target.state[1,k], target.state_diff[1,k]))
             # The poses and covs match the order in tracker defined on the top
-            poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose)
-            covs = (np.zeros((3,3)), np.zeros((3,3)), navsys.EKF.cov_posterior[:,:,k_gps], navigation_cov)
+            poses = (ground_truth_pose, navigation_pose, navigation_pose, navigation_pose, navigation_pose, navigation_pose)
+            covs = (np.zeros((3,3)), np.zeros((3,3)), navsys.EKF.cov_posterior[:,:,k_gps], navigation_cov, navigation_cov, navsys.EKF.cov_posterior[:,:,k_gps])
             est_quat, est_vel, est_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
-            exargs = ({}, {}, {'F' : F_ownship, 'Q' : Q_ownship, 'full_state' : np.hstack((est_quat, est_vel, est_pos))}, {})
+            exargs = ({}, {}, {'F' : F_ownship, 'Q' : Q_ownship, 'full_state' : np.hstack((est_quat, est_vel, est_pos))}, {}, {}, {'F' : F_ownship, 'Q' : Q_ownship, 'full_state' : np.hstack((est_quat, est_vel, est_pos)), 'reset_xcor' : True})
             # Step the tracking filters
             for j, tracker in enumerate(trackers):
                 tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar, **exargs[j])
@@ -133,7 +135,9 @@ ground_truth_style = {'label' : 'Ground truth', 'marker' : 'o', 'markevery' : ma
 schmidt_style = {'label' : 'Schmidt', 'marker' : 's', 'markevery' : mark_every, 'ms' : marker_size}
 uncomp_style = {'label' : 'Uncompensated', 'marker' : 'v', 'markevery' : mark_every, 'ms' : marker_size}
 conv_style = {'label' : 'Converted measurement', 'marker' : 'h', 'markevery' : mark_every, 'ms' : marker_size}
-hea = (ground_truth_style, uncomp_style, schmidt_style, conv_style)
+ekf_style = {'label' : 'Ucomp EKF', 'marker' : 'd', 'markevery' : mark_every, 'ms' : marker_size}
+reset_style = {'label' : 'Reset cov', 'marker' : '^', 'markevery' : mark_every, 'ms' : marker_size}
+hea = (ground_truth_style, uncomp_style, schmidt_style, conv_style, ekf_style, reset_style)
 with plt.style.context(('filter')):
     consistency_fig, consistency_ax = plt.subplots(3,1)
     for err in errs:
@@ -154,20 +158,22 @@ with plt.style.context(('filter')):
     #xy_ax = xy_ax.reshape(4)
     vel_fig, vel_ax = plt.subplots(2,1)
     velerr_fig, velerr_ax = plt.subplots(2,1)
-    K_fig, K_ax = plt.subplots(2,1)
     for j in range(len(arg)):
         viz.target_xy(target, trackers[j], xy_ax, hea[j])
         #viz.plot_xy_pos((ownship, ), xy_ax[j], own_arg)
-        xy_ax.set_xlim((300,1600))
-        xy_ax.set_ylim((2800,4000))
+        #xy_ax.set_xlim((300,1600))
+        #xy_ax.set_ylim((2800,4000))
         xy_ax.set_xlabel('East')
         xy_ax.set_ylabel('North')
         xy_ax.legend(loc=2)
         viz.target_velocity(target, trackers[j], vel_ax, arg[j])
         viz.target_velocity_error(target, trackers[j], velerr_ax, arg[j])
+    K_fig, K_ax = plt.subplots(2,1)
+    for j in [2, 4, 5]:
         K_ax[0].plot(radar_time, trackers[j].K_gains[0,:], **arg[j])
         K_ax[1].plot(radar_time, trackers[j].K_gains[1,:], **arg[j])
         K_ax[0].legend()
+
 
     xy_2, xy_2ax = plt.subplots(1,1)
     xy_2ax.plot(ownship.state[1,:], ownship.state[0,:], 'k--', label='Ownship')

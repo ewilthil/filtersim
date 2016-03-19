@@ -479,5 +479,85 @@ class DWNA_nocomp():
         dist = np.sqrt((x[0]-self.pos[0])**2+(x[2]-self.pos[1])**2)
         bearing = np.arctan2(x[2]-self.pos[1],x[0]-self.pos[0])-self.heading
         return np.hstack((dist, pitopi(bearing)))
+class SchmidtNav:
+    def __init__(self, dt, Q_in, R_t, R_n, state_init, cov_init):
+        self.dt = dt
+        self.F_t = np.array([[1, dt, 0, 0],[0, 1, 0, 0],[0, 0, 1, dt],[0, 0, 0, 1]])
+        self.Q_t = Q_in
+        self.F_n = np.zeros((13,13))
+        self.Q_n = np.zeros((13,13))
+        self.state_est = state_init
+        self.state_cov = cov_init
+        self.R_n = R_n
+        self.R_t = R_t
+
+    def step_nav(self, F_in, Q_in, H_in, pos_in, vel_in, quat_in, measurement):
+        ## Set stuff
+        self.F_n, self.Q_n = self.discretize_system(F_in, Q_in)
+        self.pos = pos_in
+        self.vel = vel_in
+        self.quat = quat_in
+        ## Time step
+        F = block_diag(self.F_t, self.F_n)
+        Q = block_diag(self.Q_t, self.Q_n)
+        self.state_est = np.dot(F, self.state_est)
+        self.state_cov = np.dot(F, np.dot(self.state_cov, F.T))+Q
+        ## Measurement step
+        #H = np.hstack((np.zeros((7, 4)), H_in))
+        H = numerical_jacobian(self.state_est, self.measurement_nav)
+        S = np.dot(H, np.dot(self.state_cov, H.T))+self.R_n
+        K = np.dot(self.state_cov, np.dot(H.T, np.linalg.inv(S)))
+        innovation = measurement-self.measurement_nav(self.state_est)
+        self.state_est = self.state_est+np.dot(K, innovation)
+        self.state_cov = np.dot(np.identity(13)-np.dot(K, H), self.state_cov)
+        self.transform_covariance(self.state_est[4:7])
+        self.state_est[4:] = np.zeros(9)
+
+    def transform_covariance(self, ang_err):
+        G_ang = np.identity(3)+sksym(0.5*ang_err)
+        G = block_diag(np.identity(4), G_ang, np.identity(6))
+        self.state_cov = np.dot(G,np.dot(self.state_cov,G.T))
+
+    def step_radar(self, measurement):
+        ## Set stuff
+        ## Measurement step (timestep is done at nav)
+        H = numerical_jacobian(self.state_est, self.measurement)
+        S = np.dot(H, np.dot(self.state_cov, H.T))+self.R_t
+        K = np.dot(self.state_cov, np.dot(H.T, np.linalg.inv(S)))
+        measurement_est = self.measurement(self.state_est)
+        innovation = measurement-measurement_est
+        innovation[1] = pitopi(innovation[1])
+        self.state_est = self.state_est+np.dot(K, innovation)
+        self.state_est[4:] = np.zeros(9)
+        self.state_cov = np.dot(np.identity(13)-np.dot(K, H), self.state_cov)
+        self.state_cov = 0.5*(self.state_cov+self.state_cov.T)
+        return self.state_est, self.state_cov
+    
+    def discretize_system(self, F, Q):
+        row1 = np.hstack((-F, Q))
+        row2 = np.hstack((np.zeros_like(F), F.T))
+        exp_arg = np.vstack((row1, row2))
+        Loan2 = expm(exp_arg*self.dt)
+        G2 = Loan2[:F.shape[0],F.shape[0]:]
+        F3 = Loan2[F.shape[0]:,F.shape[0]:]
+        A = np.dot(F3.T,G2)
+        Q_out = 0.5*(A+A.T)
+        return expm(F*self.dt), Q_out
+
+    def measurement(self, x):
+        quat = self.quat
+        pos = self.pos
+        quat_est = conv.quat_mul(np.hstack((x[4:7]/2, 1)), quat)
+        euler_angs = conv.quaternion_to_euler_angles(quat_est)
+        dist = np.sqrt((x[0]-pos[0]-x[10])**2+(x[2]-pos[1]-x[11])**2)
+        bearing = np.arctan2(x[2]-pos[1]-x[11],x[0]-pos[0]-x[10])-euler_angs[2]
+        return np.hstack((dist, pitopi(bearing)))
+
+    def measurement_nav(self, x):
+        pos = self.pos
+        quat = self.quat
+        quat_est = conv.quat_mul(np.hstack((x[4:7]/2, 1)), quat)
+        pos_est = self.pos-x[10:]
+        return np.hstack((pos_est, quat_est))
 
 model_dict = {'DWNA' : DWNA_filter, 'CT_unknown' : CT_filter, 'CT_known' : CT_known}

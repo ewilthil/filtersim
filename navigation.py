@@ -52,7 +52,7 @@ class NavigationSystem:
         #self.strapdown.update_bias(error_state[9:12], error_state[12:15])
         self.strapdown.correct_estimates(error_state[0:3], error_state[3:6], error_state[6:9], k_imu)
         self.transform_covariance(k_gps)
-        return F, Q_temp
+        return F, Q_temp, H
         
     
     def calculate_jacobians(self, omega_est, spec_force_est, quat_est):

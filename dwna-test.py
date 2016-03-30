@@ -31,9 +31,9 @@ v0 = ownship.state_diff[0:3,0]
 p0 = ownship.state[0:3,0]
 track_state_init = np.hstack((target.state[0,0], target.state_diff[0,0], target.state[1,0], target.state_diff[1,0]))
 # Covariances
-cov_radar = np.diag((50**2, (1*np.pi/180)**2))
+cov_radar = np.diag((5**2, (0.1*np.pi/180)**2))
 track_cov_init = np.diag((5**2, 1**2, 5**2, 1**2))
-acc_cov = 0.5**2
+acc_cov = 5**2
 Q_sub = np.array([[radar_dt**4/4, radar_dt**3/2],[radar_dt**3/2, radar_dt**2]])
 Q_DWNA = acc_cov*block_diag(Q_sub, Q_sub)
 
@@ -51,6 +51,8 @@ errs = ()
 for a in arg:
     errs =errs+(ErrorStats(radar_time, N_MC, a),)
 
+new_args = {'color' : 'k', 'label' : 'New schmidt'}
+new_errs = ErrorStats(radar_time, N_MC, new_args)
 ang_args = {'color' : 'g', 'label': 'Angle', 'linestyle' : '-'}
 vel_args = {'color' : 'b', 'label' : 'Velocity'}
 pos_args = {'color' : 'r', 'label' : 'Position', 'linestyle' : '-'}
@@ -78,6 +80,9 @@ for n_mc in range(N_MC):
     uncomp_EKF = track.DWNA_nocomp(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     reset_EKF = track.DWNA_schmidt(radar_time, Q_DWNA, cov_radar, track_state_k, track_cov_init)
     trackers = (ground_truth, uncompensated_tracker, schmidt, conv_meas, uncomp_EKF, reset_EKF)
+    schmidt_new = track.SchmidtNav(M_gps*dt, Q_DWNA, cov_radar,  navsys.GPS.R, np.hstack((track_state_k, np.zeros(9))), block_diag(track_cov_init, navsys.EKF.cov_prior[:,:,0]))
+    pos_new = np.zeros((13, len(radar_time)))
+    cov_new = np.zeros((13, 13, len(radar_time)))
 
     
     # run the navigation and tracking filters
@@ -87,7 +92,7 @@ for n_mc in range(N_MC):
             navsys.step_strapdown(ownship.state[:,k], ownship.state_diff[:,k], k_imu)
         k_gps, rest_gps = int(np.floor(k/M_gps)), np.mod(k,M_gps)
         if rest_gps == 0:
-            F_ownship, Q_ownship = navsys.step_filter(ownship.state[:,k], k_imu, k_gps)
+            F_ownship, Q_ownship, H_ownship = navsys.step_filter(ownship.state[:,k], k_imu, k_gps)
             est_quat, est_vel, est_pos, _, _ = navsys.get_strapdown_estimate(k_imu)
             true_pos_err = ownship.state[:3,k]-est_pos
             true_vel_err = ownship.state_diff[:3,k]-est_vel
@@ -108,6 +113,7 @@ for n_mc in range(N_MC):
             true_all = np.hstack((true_ang_err, true_vel_err, true_pos_err))
             est_all = np.hstack((est_ang_err, est_vel_err, est_pos_err))
             nav_errs[3].update_vals(true_all, est_all, cov_all, k_gps, n_mc)
+            schmidt_new.step_nav(F_ownship, Q_ownship, H_ownship, est_pos, est_vel, est_quat, navsys.GPS.data[:,k_gps])
         k_radar, rest_radar = int(np.floor(k/M_radar)), np.mod(k, M_radar)
         if rest_radar == 0:
             ownship_radar.generate_measurement((target.state[:,k], ownship.state[:,k]), k_radar)
@@ -127,6 +133,9 @@ for n_mc in range(N_MC):
             for j, tracker in enumerate(trackers):
                 tracker.step(ownship_radar.data[:,k_radar], poses[j], covs[j], k_radar, **exargs[j])
                 errs[j].update_vals(true_track_state, tracker.est_posterior[:4,k_radar], tracker.cov_posterior[:4,:4,k_radar], k_radar, n_mc)
+
+            pos_new[:,k_radar], cov_new[:,:,k_radar] = schmidt_new.step_radar(ownship_radar.data[:,k_radar])
+            new_errs.update_vals(true_track_state, pos_new[:4,k_radar], cov_new[:4,:4,k_radar], k_radar, n_mc)
     print str(datetime.datetime.now()), n_mc+1, '/', N_MC
 
 mark_every = 10
@@ -142,6 +151,7 @@ with plt.style.context(('filter')):
     consistency_fig, consistency_ax = plt.subplots(3,1)
     for err in errs:
         err.plot_errors(consistency_ax[0], consistency_ax[1], consistency_ax[2])
+    new_errs.plot_errors(consistency_ax[0], consistency_ax[1], consistency_ax[2])
     consistency_ax[0].set_title('NEES for ' + str(N_MC) + ' Monte Carlo runs')
     consistency_ax[1].set_title('Position RMSE for ' + str(N_MC) + ' Monte Carlo runs')
     consistency_ax[2].set_title('Velocity RMSE for ' + str(N_MC) +' Monte Carlo runs')
@@ -168,6 +178,9 @@ with plt.style.context(('filter')):
         xy_ax.legend(loc=2)
         viz.target_velocity(target, trackers[j], vel_ax, arg[j])
         viz.target_velocity_error(target, trackers[j], velerr_ax, arg[j])
+    vel_ax[0].plot(radar_time, pos_new[1,:], 'k')
+    vel_ax[1].plot(radar_time, pos_new[3,:], 'k')
+    xy_ax.plot(pos_new[2,:], pos_new[0,:], 'k--')
     K_fig, K_ax = plt.subplots(2,1)
     for j in [2, 4, 5]:
         K_ax[0].plot(radar_time, trackers[j].K_gains[0,:], **arg[j])
@@ -189,4 +202,3 @@ with plt.style.context(('filter')):
     head_ax.errorbar(navsys.EKF.time, est_eul[2,0::20], yerr=3*np.sqrt(np.squeeze(navsys.EKF.cov_posterior[2,2,:])),errorevery=10)
     plt.savefig('hea.pdf')
     plt.show()
-

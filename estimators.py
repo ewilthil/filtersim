@@ -1,6 +1,6 @@
 import numpy as np
 import ipdb
-from base_classes import pitopi
+from base_classes import pitopi, numerical_jacobian
 class EKF_navigation:
     def __init__(self, f, h, R, est_init, cov_init, time, F=None, H=None):
         self.f = f
@@ -68,59 +68,39 @@ class EKF:
         self.h = h
         self.Q = Q
         self.R = R
+        self.F = F
+        self.H = H
         self.est_prior = est_init
         self.cov_prior = cov_init
         self.est_posterior = est_init
         self.cov_posterior = cov_init
-        if F is not None:
-            self.F = F
+        self.nx = len(est_init)
+        self.nz = int(np.sqrt(R.size))
+
+    def step_markov(self, u):
+        self.est_prior = self.f(self.est_posterior, u, np.zeros(self.nx))
+        F_k = np.zeros((self.nx, self.nx))
+        if self.F == None:
+            F_k = numerical_jacobian(self.est_posterior, lambda x : self.f(x, u, np.zeros(self.nx)))
         else:
-            #Construct the jacobian by differences
-            pass
-        if H is not None:
-            self.H = H
-        else:
-            # Same
-            pass
-    def step_markov(self):
-        self.est_prior = self.f(self.est_posterior)
-        F_k = self.F(self.est_posterior)
-        Q_k = self.Q(self.est_posterior)
-        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+Q_k
+            F_k = self.F(self.est_posterior)
+        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+self.Q
         return self.est_prior, self.cov_prior
     
-    def step_filter(self, measurement):
-        self.measurement = measurement
-        H_k = self.H(self.est_prior)
+    def step_filter(self, measurement,angInds=[]):
+        innovation = measurement-self.h(self.est_prior, np.zeros(self.nz))
+        for idx in angInds:
+            innovation[idx] = pitopi(innovation[idx])
+        if self.H == None:
+            H_k = numerical_jacobian(self.est_prior, lambda x : self.h(x, np.zeros(self.nz)))
+        else:
+            H_k = self.H(self.est_prior)
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
-
-        
-        #C = self.cov_prior[:4,4:]
-        #B = self.cov_prior[4:,4:]
-        #K[4:,:] = np.zeros((9,2))
-        #Kb = K[4:,:]
-        #H = H_k[:,:4]
-        #Hb = H_k[:,4:]
-        K_pos = np.linalg.norm(np.vstack((np.linalg.norm(K[0,0]), np.linalg.norm(K[2,0]))))
-        K_vel = np.linalg.norm(np.vstack((np.linalg.norm(K[1,0]), np.linalg.norm(K[3,0]))))
-
-
-        self.measurement_prediction = self.h(self.est_prior)
-        innovation = self.measurement-self.measurement_prediction
-        innovation[1] = pitopi(innovation[1])
         self.est_posterior = self.est_prior+np.dot(K, innovation)
-        #self.est_posterior[4:] = np.zeros(9)
-        nx = len(self.est_posterior)
-        hea = np.identity(nx)-np.dot(K,H_k)
-        cov = np.dot(hea, np.dot(self.cov_prior, hea.T))+np.dot(K, np.dot(self.R, K.T))
+        joseph = np.identity(self.nx)-np.dot(K,H_k)
+        cov = np.dot(joseph, np.dot(self.cov_prior, joseph.T))+np.dot(K, np.dot(self.R, K.T))
         if np.min(np.linalg.eig(cov)[0]) < 0:
             ipdb.set_trace()
-        #cov = np.dot(np.identity(nx)-np.dot(K, H_k), self.cov_prior)
-        #cov[4:,:4] = cov[:4,4:].T
-        #cov[:4,4:] = cov[4:,:4].T
-        self.cov_posterior = cov#0.5*(cov+cov.T)
-        #print np.linalg.eig(cov)[0]
-        #print np.linalg.eig(self.cov_posterior)[0]
-        #print '-----------------------' 
-        return self.est_posterior, self.cov_posterior, np.array([K_pos, K_vel])
+        self.cov_posterior = 0.5*(cov+cov.T)
+        return self.est_posterior, self.cov_posterior, K

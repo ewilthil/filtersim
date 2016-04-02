@@ -84,7 +84,8 @@ class EKF:
             F_k = numerical_jacobian(self.est_posterior, lambda x : self.f(x, u, np.zeros(self.nx)))
         else:
             F_k = self.F(self.est_posterior)
-        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+self.Q
+        F_v = numerical_jacobian(np.zeros(self.nx), lambda v : self.f(self.est_posterior, u, v))
+        self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+np.dot(F_v, np.dot(self.Q, F_v.T))
         return self.est_prior, self.cov_prior
     
     def step_filter(self, measurement,angInds=[]):

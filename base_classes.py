@@ -52,6 +52,10 @@ class Model:
         self.theta = self.eul[1]
         self.psi = self.eul[2]
         self.surge = self.nu[0]
+        self.pos_x = 0
+        self.vel_x = 0
+        self.pos_y = 1
+        self.vel_y = 1
     
     def kinematic_ode(self, x):
         s = lambda ang : np.sin(ang)
@@ -91,6 +95,28 @@ class Model:
     def NED_vel(self, k):
         R = euler_angles_to_matrix(self.state[self.eul,k])
         return np.dot(R, self.state[self.nu[0:3],k])
+
+def numerical_jacobian(x, h, epsilon=10**-7):
+    """
+    Calculate a Jacobian from h at x numerically using finite difference
+    """
+    x_dim = x.size
+    h0 = h(x)
+    h_dim = h0.size
+    H = np.zeros((h_dim, x_dim))
+    for i in range(x_dim):
+        direction = np.zeros(x_dim)
+        direction[i] = 1
+        pert = epsilon*direction
+        h_pert = h(x + pert)
+        H[:,i] = (h_pert - h0)/epsilon
+    return H
+
+def dwna_transition(dt):
+    F = np.identity(4)
+    F[0,1] = dt
+    F[2,3] = dt
+    return F
 
 class ErrorStats:
     def __init__(self, time, N_mc, plot_args):

@@ -1,11 +1,12 @@
 import numpy as np
+import ipdb
 import matplotlib.pyplot as plt
 from autopy.sylte import load_pkl
 from filtersim.base_classes import Sensor, Model, radar_measurement
 from bearings_only_tracking import BearingsOnlyEKF, BearingsOnlyMP
 N_mc = 1
-target = load_pkl('target_traj.pkl')
-ownship = load_pkl('ownship_traj.pkl')
+target = load_pkl('target_traj_long.pkl')
+ownship = load_pkl('ownship_traj_long.pkl')
 time = ownship.time
 Tend = time[-1]
 dt = time[1]-time[0]
@@ -15,7 +16,7 @@ M_radar = 100
 imu_time = np.arange(0, Tend+M_imu*dt, M_imu*dt)
 gps_time = np.arange(0, Tend+M_gps*dt, M_gps*dt)
 radar_time = np.arange(0, Tend+M_radar*dt, M_radar*dt)
-cov_radar = np.diag((1**2, np.deg2rad(0.1)**2))
+cov_radar = np.diag((1**2, np.deg2rad(0.7)**2))
 true_range = np.zeros_like(radar_time)
 true_tracking_state = np.zeros((4, len(radar_time)))
 true_polar_state = np.zeros((4, len(radar_time)))
@@ -24,8 +25,8 @@ true_measurement = np.zeros_like(radar_time)
 for n_mc in range(N_mc):
     ownship_radar = Sensor(radar_measurement, np.zeros(2), cov_radar, radar_time)
     true_ownship_tracking_init = np.hstack((ownship.state[ownship.pos_x,0], ownship.state_diff[ownship.vel_x,0], ownship.state[ownship.pos_y, 0], ownship.state_diff[ownship.vel_y, 0]))
-    tracker = BearingsOnlyEKF(radar_time, 0.1**2, cov_radar[1,1], np.array([500, 0, 500, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
-    trackerMP = BearingsOnlyMP(radar_time, 0.1**2, cov_radar[1,1], np.array([500, 0, 500, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
+    tracker = BearingsOnlyEKF(radar_time, 0.1**2, cov_radar[1,1], np.array([5000, 0, 5000, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
+    trackerMP = BearingsOnlyMP(radar_time, 0.1**2, cov_radar[1,1], np.array([5000, 0, 5000, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
     c2p = trackerMP.cartesian_to_polar
     p2c = trackerMP.polar_to_cartesian
     for k, t in enumerate(time):

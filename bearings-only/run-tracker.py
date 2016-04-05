@@ -3,7 +3,7 @@ import ipdb
 import matplotlib.pyplot as plt
 from autopy.sylte import load_pkl
 from filtersim.base_classes import Sensor, Model, radar_measurement
-from bearings_only_tracking import BearingsOnlyEKF, BearingsOnlyMP
+from bearings_only_tracking import BearingsOnlyEKF, BearingsOnlyMP, BearingsOnlyPF
 N_mc = 1
 target = load_pkl('target_traj_long.pkl')
 ownship = load_pkl('ownship_traj_long.pkl')
@@ -27,6 +27,7 @@ for n_mc in range(N_mc):
     true_ownship_tracking_init = np.hstack((ownship.state[ownship.pos_x,0], ownship.state_diff[ownship.vel_x,0], ownship.state[ownship.pos_y, 0], ownship.state_diff[ownship.vel_y, 0]))
     tracker = BearingsOnlyEKF(radar_time, 0.1**2, cov_radar[1,1], np.array([5000, 0, 5000, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
     trackerMP = BearingsOnlyMP(radar_time, 0.1**2, cov_radar[1,1], np.array([5000, 0, 5000, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
+    trackerPF = BearingsOnlyPF(radar_time, 0.1**2, cov_radar[1,1], np.array([5000, 0, 5000, 0]), np.diag((5**2, 1**2, 5**2, 1**2)), true_ownship_tracking_init)
     c2p = trackerMP.cartesian_to_polar
     p2c = trackerMP.polar_to_cartesian
     for k, t in enumerate(time):
@@ -43,17 +44,15 @@ for n_mc in range(N_mc):
             ownship_radar.generate_measurement((target.state[:,k], ownship.state[:,k]), k_radar)
             tracker.step(ownship_radar.data[1,k_radar]+ownship.state[ownship.psi,k], true_ownship_tracking_state, ownship_pose, k_radar)
             trackerMP.step(ownship_radar.data[1,k_radar]+ownship.state[ownship.psi,k], true_ownship_tracking_state, ownship_pose, k_radar)
+            trackerPF.step(ownship_radar.data[1,k_radar]+ownship.state[ownship.psi,k], true_ownship_tracking_state, ownship_pose, k_radar)
 
 
 plt.figure()
 plt.subplot(121)
 plt.plot(tracker.local_est_posterior[0,:], tracker.local_est_posterior[2,:], '--*', label='EKF tracker')
-plt.plot(tracker.local_est_posterior[0,0], tracker.local_est_posterior[2,0], ' o')
 plt.plot(trackerMP.local_est_posterior[0,:], trackerMP.local_est_posterior[2,:], ':s', label='MP tracker')
-plt.plot(trackerMP.local_est_posterior[0,0], trackerMP.local_est_posterior[2,0], ' o')
-plt.plot(true_tracking_state[0,:], true_tracking_state[2,:], label='true')
-plt.plot(true_tracking_state[0,0], true_tracking_state[2,0], 'o')
-plt.plot(true_conv_state[0,:], true_conv_state[2,:], label='true conv')
+plt.plot(trackerPF.local_est_posterior[0,:], trackerPF.local_est_posterior[2,:], '-.d', label='PF tracker')
+plt.plot(true_tracking_state[0,:], true_tracking_state[2,:], 'k',label='true')
 plt.plot(true_conv_state[0,0], true_conv_state[2,0], 'o')
 plt.title('Local position')
 plt.legend()

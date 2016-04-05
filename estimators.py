@@ -77,7 +77,7 @@ class EKF:
         self.nx = len(est_init)
         self.nz = int(np.sqrt(R.size))
 
-    def step_markov(self, u):
+    def time_step(self, u):
         self.est_prior = self.f(self.est_posterior, u, np.zeros(self.nx))
         F_k = np.zeros((self.nx, self.nx))
         if self.F == None:
@@ -88,7 +88,7 @@ class EKF:
         self.cov_prior = np.dot(F_k, np.dot(self.cov_posterior, F_k.T))+np.dot(F_v, np.dot(self.Q, F_v.T))
         return self.est_prior, self.cov_prior
     
-    def step_filter(self, measurement,angInds=[]):
+    def measurement_step(self, measurement,angInds=[]):
         innovation = measurement-self.h(self.est_prior, np.zeros(self.nz))
         for idx in angInds:
             innovation[idx] = pitopi(innovation[idx])
@@ -105,3 +105,46 @@ class EKF:
             ipdb.set_trace()
         self.cov_posterior = 0.5*(cov+cov.T)
         return self.est_posterior, self.cov_posterior, K
+
+class PF:
+    def __init__(self, transition, likelihood, init_func, N):
+        self.transition = transition
+        self.likelihood = likelihood
+        self.N = N
+        self.nx = len(init_func())
+        self.weights = 1./N*np.ones(N)
+        self.particles = np.zeros((self.nx, N))
+        for n in range(self.N):
+            self.particles[:,n] = init_func()
+
+    def time_step(self, u):
+        for n in range(self.N):
+            self.particles[:,n], _ = self.transition(self.particles[:,n], u)
+
+    def measurement_step(self, measurement):
+        for n in range(self.N):
+            _, weight_factor = self.likelihood(self.particles[:,n], measurement)
+            self.weights[n] = self.weights[n]*weight_factor
+        weight_sum = np.sum(self.weights)
+        self.weights = self.weights/weight_sum
+
+    def calculate_mean_and_covariance(self):
+        mean = np.sum(self.weights*self.particles, axis=1)
+        cov = np.zeros((self.nx, self.nx))
+        for n in range(self.N):
+            diff = self.particles[:,n]-mean
+            cov += self.weights[n]*np.dot(diff[np.newaxis].T, diff[np.newaxis])
+        return mean, cov
+
+    def resample(self):
+        cumulative_weights = np.cumsum(self.weights)
+        indices = np.zeros(self.N)
+        noise_val = np.random.uniform(0,1.0)/self.N
+        current_index = 1
+        for j in range(self.N):
+            uj = noise_val + (1.0*j)/self.N
+            while uj > cumulative_weights[current_index]:
+                current_index = current_index+1
+            indices[j] = current_index
+        self.particles = self.particles[:,indices.astype(int)]
+        self.weights = np.ones_like(self.weights)/self.N

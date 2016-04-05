@@ -1,7 +1,8 @@
 import numpy as np
-from filtersim.estimators import EKF
+from filtersim.estimators import EKF, PF
 import autopy.conversion as conv
 from filtersim.base_classes import numerical_jacobian, dwna_transition
+from scipy.stats import multivariate_normal
 import ipdb
 
 class BearingsOnly():
@@ -36,8 +37,8 @@ class BearingsOnlyEKF(BearingsOnly):
         u = np.dot(self.cartesian_transition, self.prev_state)-current_state
         self.prev_state = current_state
         if k > 0:
-            self.filter.step_markov(u)
-        self.local_est_posterior[:,k], self.local_cov_posterior[:,:,k], _ = self.filter.step_filter(measurement, [0])
+            self.filter.time_step(u)
+        self.local_est_posterior[:,k], self.local_cov_posterior[:,:,k], _ = self.filter.measurement_step(measurement, [0])
         self.global_est_posterior[:,k], self.global_cov_posterior[:,:,k] = self.local_to_global_estimate(current_pose, k)
         
     def state_transition(self, x, u, v):
@@ -61,8 +62,8 @@ class BearingsOnlyMP(BearingsOnly):
         u = np.dot(self.cartesian_transition, self.prev_state)-current_state
         self.prev_state = current_state
         if k > 0:
-            self.filter.step_markov(u)
-        y, cov_y, _ = self.filter.step_filter(measurement, [0])
+            self.filter.time_step(u)
+        y, cov_y, _ = self.filter.measurement_step(measurement, [0])
         self.polar_est[:,k] = y
         G_y = numerical_jacobian(y, self.polar_to_cartesian)
         self.local_est_posterior[:,k] = self.polar_to_cartesian(y)
@@ -96,3 +97,38 @@ class BearingsOnlyMP(BearingsOnly):
         cos_beta = np.cos(beta)
         x = np.array([R*cos_beta, R_dot*cos_beta-R*sin_beta*beta_dot, R*sin_beta, R_dot*sin_beta+R*cos_beta*beta_dot])
         return x
+
+class BearingsOnlyPF(BearingsOnly):
+    def initialize_filter(self, x0, P0, sigma_a, R, Nparticles=10):
+        Q = sigma_a*np.dot(self.cartesian_noise_transition, self.cartesian_noise_transition.T)
+        def transition(x, u):
+            x_next = self.state_transition(x, u, np.zeros_like(x))
+            draw = multivariate_normal(mean=x_next, cov=Q,allow_singular=True).rvs()
+            prob = multivariate_normal.pdf(draw, mean=x_next, cov=Q, allow_singular=True)
+            return draw, prob
+        def likelihood(x, z_in):
+            z = self.measurement_model(x, np.zeros(np.sqrt(R.size)))
+            draw = multivariate_normal(mean=z, cov=R).rvs()
+            prob = multivariate_normal.pdf(z_in, mean=z, cov=R)
+            return draw, prob
+        self.filter = PF(transition, likelihood, multivariate_normal(mean=x0, cov=P0).rvs, Nparticles)
+
+    def step(self, measurement, current_state, current_pose, k):
+        u = np.dot(self.cartesian_transition, self.prev_state)-current_state
+        self.prev_state = current_state
+        if k > 0:
+            self.filter.time_step(u)
+        self.filter.measurement_step(measurement)
+        mean, cov = self.filter.calculate_mean_and_covariance()
+        self.local_est_posterior[:,k] = mean
+        self.local_cov_posterior[:,:,k] = cov
+        self.filter.resample()
+
+    def state_transition(self, x, u, v):
+        x_next = np.dot(self.cartesian_transition, x)+u+v
+        return x_next
+
+    def measurement_model(self, x, w):
+        z = np.arctan2(x[2], x[0])+w
+        return z
+

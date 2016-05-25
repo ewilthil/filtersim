@@ -31,7 +31,7 @@ v0 = ownship.state_diff[0:3,0]
 p0 = ownship.state[0:3,0]
 track_state_init = np.hstack((target.state[0,0], target.state_diff[0,0], target.state[1,0], target.state_diff[1,0]))
 # Covariances
-cov_radar = np.diag((50**2, (1*np.pi/180)**2))
+cov_radar = np.diag((20**2, (0.5*np.pi/180)**2))
 track_cov_init = np.diag((5**2, 1**2, 5**2, 1**2))
 acc_cov = 1**2
 Q_sub = np.array([[radar_dt**4/4, radar_dt**3/2],[radar_dt**3/2, radar_dt**2]])

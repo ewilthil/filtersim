@@ -94,16 +94,8 @@ class EKF:
         self.S = np.dot(H_k, np.dot(self.cov_prior, H_k.T))+self.R
         K = np.dot(self.cov_prior, np.dot(H_k.T, np.linalg.inv(self.S)))
 
-        
-        #C = self.cov_prior[:4,4:]
-        #B = self.cov_prior[4:,4:]
-        #K[4:,:] = np.zeros((9,2))
-        #Kb = K[4:,:]
-        #H = H_k[:,:4]
-        #Hb = H_k[:,4:]
         K_pos = np.linalg.norm(np.vstack((np.linalg.norm(K[0,0]), np.linalg.norm(K[2,0]))))
         K_vel = np.linalg.norm(np.vstack((np.linalg.norm(K[1,0]), np.linalg.norm(K[3,0]))))
-
 
         self.measurement_prediction = self.h(self.est_prior)
         innovation = self.measurement-self.measurement_prediction

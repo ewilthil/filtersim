@@ -11,7 +11,7 @@ from scipy.linalg import block_diag
 from scipy.stats import multivariate_normal
 plt.close('all')
 
-N_MC = 10
+N_MC = 100
 target = load_pkl('target_straight.pkl')
 ownship = load_pkl('ownship_straight.pkl')
 time = ownship.time
@@ -176,11 +176,5 @@ with plt.style.context(('filter')):
     xy_2ax.set_ylabel('North')
     xy_2ax.legend(loc=2)
     #plt.figure(xy_fig.number)
-    head_fig, head_ax = plt.subplots(1,1)
-    est_quat = navsys.strapdown.data[navsys.strapdown.orient, :]
-    est_eul = conv.quaternion_to_euler_angles(est_quat.T).T
-    head_ax.plot(ownship.time, ownship.state[5,:], 'k', label='True heading')
-    head_ax.errorbar(navsys.EKF.time, est_eul[2,0::20], yerr=3*np.sqrt(np.squeeze(navsys.EKF.cov_posterior[2,2,:])),errorevery=10)
-    plt.savefig('hea.pdf')
     plt.show()
 

@@ -36,7 +36,7 @@ class NavigationSystem:
         cov_init[6:9,6:9] = 1**2*np.identity(3)
         #cov_init[9:15,9:15] = 1e-6*np.identity(6)
         self.EKF = EKF_navigation(0, 0, self.GPS.R, np.zeros(9), cov_init, gps_time)
-        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 0*np.identity(3))
+        self.Q_cont = block_diag(self.gyr_cov*np.identity(3), self.acc_cov*np.identity(3), 1e-8*np.identity(3))
     def step_strapdown(self, state, state_diff, k_imu):
         self.IMU.generate_measurement((state, state_diff),k_imu)
         imu_data = self.IMU.data[:,k_imu]

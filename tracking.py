@@ -329,6 +329,7 @@ class DWNA_schmidt():
         self.filter.est_posterior[4:] = np.zeros(self.nx-4)
         self.filter.cov_posterior[4:,4:] = ownship_cov
         Phi = expm(self.dt*F)
+        #Phi = np.identity(9)
         Qd = self.discretize_system(F, Q)
         self.filter.f = lambda x : np.dot(block_diag(self.F_t, Phi), x)
         self.filter.F = lambda x : block_diag(self.F_t, Phi)

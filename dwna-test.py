@@ -31,7 +31,7 @@ v0 = ownship.state_diff[0:3,0]
 p0 = ownship.state[0:3,0]
 track_state_init = np.hstack((target.state[0,0], target.state_diff[0,0], target.state[1,0], target.state_diff[1,0]))
 # Covariances
-cov_radar = np.diag((20**2, (0.5*np.pi/180)**2))
+cov_radar = np.diag((20**2, (1*np.pi/180)**2))
 track_cov_init = np.diag((5**2, 1**2, 5**2, 1**2))
 acc_cov = 1**2
 Q_sub = np.array([[radar_dt**4/4, radar_dt**3/2],[radar_dt**3/2, radar_dt**2]])
@@ -162,6 +162,7 @@ with plt.style.context(('filter')):
         xy_ax.set_ylim((2800,4000))
         xy_ax.set_xlabel('East')
         xy_ax.set_ylabel('North')
+        xy_ax.set_title('Sample trajectories')
         xy_ax.legend(loc=2)
         viz.target_velocity(target, trackers[j], vel_ax, arg[j])
         viz.target_velocity_error(target, trackers[j], velerr_ax, arg[j])
@@ -169,12 +170,18 @@ with plt.style.context(('filter')):
         K_ax[1].plot(radar_time, trackers[j].K_gains[1,:], **arg[j])
         K_ax[0].legend()
 
+    plt.figure(xy_fig.number)
+    plt.savefig('sample-trajs.pdf')
+
     xy_2, xy_2ax = plt.subplots(1,1)
     xy_2ax.plot(ownship.state[1,:], ownship.state[0,:], 'k--', label='Ownship')
     xy_2ax.plot(target.state[1,:], target.state[0,:], 'k', label='Target')
     xy_2ax.set_xlabel('East')
     xy_2ax.set_ylabel('North')
     xy_2ax.legend(loc=2)
-    #plt.figure(xy_fig.number)
+    xy_2ax.set_aspect('equal')
+    xy_2ax.set_xticks((-1000, 0, 1000, 2000))
+    xy_2ax.set_title('Simulation setup')
+    plt.savefig('ground-truth.pdf')
     plt.show()
 

@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import multivariate_normal
 from autopy.conversion import euler_angles_to_matrix
-from scipy.linalg import block_diag
+from scipy.linalg import block_diag, expm
 from scipy.integrate import odeint
 from scipy.stats import chi2
 
@@ -113,10 +113,23 @@ class ErrorStats:
     def plot_errors(self, NEES_ax, RMSE_pos_ax, RMSE_vel_ax,percentile=0.95):
         lower_lim = (1-percentile)/2
         upper_lim = 1-lower_lim
-        UB = chi2(df=2*self.N_mc).ppf(upper_lim)/self.N_mc*np.ones_like(self.time)
-        LB = chi2(df=2*self.N_mc).ppf(lower_lim)/self.N_mc*np.ones_like(self.time)
-        NEES_ax.plot(self.time, np.mean(self.NEES, axis=0), **self.plot_args)
+        UB = chi2(df=self.N_mc).ppf(upper_lim)*np.ones_like(self.time)
+        LB = chi2(df=self.N_mc).ppf(lower_lim)*np.ones_like(self.time)
+        NEES_ax.plot(self.time, np.sum(self.NEES, axis=0), **self.plot_args)
         NEES_ax.plot(self.time, UB, 'k')
         NEES_ax.plot(self.time, LB, 'k')
         RMSE_pos_ax.plot(self.time, np.sqrt(np.mean(self.RMSE_pos, axis=0)), **self.plot_args)
         RMSE_vel_ax.plot(self.time, np.sqrt(np.mean(self.RMSE_vel, axis=0)), **self.plot_args)
+
+
+def discretize_system(Fc, Qc, dt):
+    row1 = np.hstack((-Fc, Qc))
+    row2 = np.hstack((np.zeros_like(Fc), Fc.T))
+    exp_arg = np.vstack((row1, row2))
+    Loan2 = expm(exp_arg*dt)
+    nx = Fc.shape[0]
+    G2 = Loan2[:nx,nx:]
+    F = Loan2[nx:,nx:].T
+    Q = np.dot(F,G2)
+    Q = 0.5*(Q+Q.T)
+    return F, Q

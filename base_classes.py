@@ -15,20 +15,18 @@ def radar_measurement(x, x0):
     return np.array([R, alpha])
 
 class Sensor:
-    def __init__(self, h, bias, noise_cov, time_vec):
+    def __init__(self, h, bias, R):
         self.h = h
-        self.R = noise_cov
+        self.R = R
         self.bias = bias
-        self.time = time_vec
-        self.data = np.zeros((noise_cov.shape[0], time_vec.shape[0]))
         self.noise = multivariate_normal(cov=self.R)
 
-    def generate_measurement(self, x, k):
+    def generate_measurement(self, x):
         if isinstance(x, tuple):
             measurement = self.h(*x)+self.bias+self.noise.rvs()
         else:
             measurement = self.h(x)+self.bias+self.noise.rvs()
-        self.data[:,k] = measurement
+        return measurement
 nx = 18
 class Model:
     def __init__(self, D, T, Q, init_state, time_vector):

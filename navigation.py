@@ -96,65 +96,49 @@ class NavigationSystem:
 
 
 class Strapdown:
-    def __init__(self, q0, v0, p0, time_vec):
-        self.orient = np.arange(4)
-        self.vel = np.arange(3)+self.orient[-1]+1
-        self.pos = np.arange(3)+self.vel[-1]+1
-        self.rate = np.arange(3)+self.pos[-1]+1
-        self.spec_force = np.arange(3)+self.rate[-1]+1
-        self.N = len(time_vec)
-        self.time = time_vec
-        self.data = np.zeros((16, self.N))
-        self.dt = time_vec[1]-time_vec[0]
-        self.data[self.orient, 0] = q0
-        self.data[self.vel, 0] = v0
-        self.data[self.pos, 0] = p0
+    def __init__(self, q0, v0, p0, dt):
+        self.orient = q0
+        self.vel = v0
+        self.pos = p0
+        self.dt = dt
         self.bias_acc = np.zeros(3)
         self.bias_gyr = np.zeros(3)
     
-    def step(self, imu_data, k):
-        self.correct_biases(imu_data, k)
-        if k == 0:
-            pass
-        else:
-            self.update_attitude(k)
-            self.update_velocity(k)
-            self.update_poisition(k)
+    def step(self, spec_force, ang_rate):
+        spec_force, ang_rate = self.correct_biases(spec_force, ang_rate)
+        self.update_attitude(ang_rate)
+        self.update_velocity(spec_force)
+        self.update_poisition()
+        return self.orient, self.vel, self.pos
 
-    def update_attitude(self, k):
-        q_prev = self.data[self.orient, k-1]
-        ang_rate = self.data[self.rate, k]
-        qv = q_prev[0:3]
-        qw = q_prev[3]
+    def update_attitude(self, ang_rate):
+        qv = self.orient[0:3]
+        qw = self.orient[3]
         ang_arg = np.linalg.norm(ang_rate)*self.dt/2
         quat_inc = np.hstack((ang_rate/np.linalg.norm(ang_rate)*np.sin(ang_arg), np.cos(ang_arg)))
         T = 0.5*np.vstack((np.array(qw*np.eye(3)+sksym(qv)),-qv))
-        #self.data[self.orient,k] = q_prev + self.dt*np.dot(T, ang_rate)
-        self.data[self.orient,k] = conv.quat_mul(q_prev, quat_inc)
-        #self.data[self.orient,k] = self.data[self.orient,k]/np.linalg.norm(self.data[self.orient,k])
+        self.prev_orient = self.orient
+        self.orient = conv.quat_mul(self.orient, quat_inc)
 
-    def update_velocity(self, k):
-        q = self.data[self.orient, k]
-        prev_q = self.data[self.orient, k-1]
-        prev_vel = self.data[self.vel, k-1]
-        spec_force = self.data[self.spec_force, k]
-        R = 0.5*(conv.quat_to_rot(q)+conv.quat_to_rot(prev_q))
-        self.data[self.vel,k] = prev_vel + self.dt*(np.dot(R,spec_force)+gravity_n)
+    def update_velocity(self, spec_force):
+        R = 0.5*(conv.quat_to_rot(self.prev_orient)+conv.quat_to_rot(self.orient))
+        self.prev_vel = self.vel
+        self.vel = self.vel+self.dt*(np.dot(R,spec_force)+gravity_n)
 
-    def update_poisition(self, k):
-        self.data[self.pos,k] = self.data[self.pos,k-1] + self.dt*0.5*(self.data[self.vel,k]+self.data[self.vel,k-1])
+    def update_poisition(self):
+        self.pos = self.pos+self.dt*(self.prev_vel+self.vel)/2.
 
-    def correct_biases(self, imu_data, k):
-        self.data[self.spec_force,k] = imu_data[0:3]-self.bias_acc
-        self.data[self.rate,k] = imu_data[3:6]-self.bias_gyr
+    def correct_biases(self, spec_force, ang_rate):
+        return spec_force-self.bias_acc, ang_rate-self.bias_gyr
     
     def update_bias(self, delta_bias_acc, delta_bias_gyr):
         self.bias_acc -= delta_bias_acc
         self.bias_gyr -= delta_bias_gyr
 
-    def correct_estimates(self, delta_ang, delta_vel, delta_pos, k):
+    def correct_estimates(self, delta_ang, delta_vel, delta_pos):
         delta_quat = np.hstack((delta_ang/2,1))
         delta_quat = delta_quat/np.linalg.norm(delta_quat)
-        self.data[self.orient,k] = conv.quat_mul(delta_quat,self.data[self.orient,k])
-        self.data[self.vel,k] = self.data[self.vel,k]+delta_vel
-        self.data[self.pos,k] = self.data[self.pos,k]+delta_pos
+        self.orient = conv.quat_mul(delta_quat,self.orient)
+        self.vel += delta_vel
+        self.pos += delta_pos
+        return self.orient, self.vel, self.pos

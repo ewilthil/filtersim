@@ -6,7 +6,6 @@ from estimators import EKF_navigation
 from tf.transformations import euler_matrix, quaternion_from_euler
 from base_classes import Sensor
 
-
 gravity_n = np.array([0, 0, 9.81])
 def imu_measurement(state, state_diff):
     C = conv.euler_angles_to_matrix(state[3:6])
@@ -19,6 +18,88 @@ def gps_measurement(state):
 
 def sksym(qv):
     return np.array([[0,-qv[2],qv[1]],[qv[2],0,-qv[0]],[-qv[1],qv[0],0]])
+
+class StrapdownData:
+    def __init__(self):
+        self.orient = np.zeros(4)
+        self.vel = np.zeros(3)
+        self.pos = np.zeros(3)
+        self.spec_force = np.zeros(3)
+        self.ang_rate = np.zeros(3)
+        self.acc_bias = np.zeros(3)
+        self.gyr_bias = np.zeros(3)
+
+class Strapdown:
+    def __init__(self, q0, v0, p0, dt):
+        self.data = StrapdownData()
+        self.data.orient = q0
+        self.data.vel = v0
+        self.data.pos = p0
+        self.dt = dt
+    
+    def step(self, spec_force, ang_rate):
+        self.data.spec_force, self.data.ang_rate = self.correct_biases(spec_force, ang_rate)
+        self.update_attitude(self.data.ang_rate)
+        self.update_velocity(self.data.spec_force)
+        self.update_poisition()
+        return self.data.orient, self.data.vel, self.data.pos
+
+    def update_attitude(self, ang_rate):
+        quat = self.data.orient
+        qv = quat[0:3]
+        qw = quat[3]
+        ang_arg = np.linalg.norm(ang_rate)*self.dt/2
+        quat_inc = np.hstack((ang_rate/np.linalg.norm(ang_rate)*np.sin(ang_arg), np.cos(ang_arg)))
+        self.prev_orient = quat
+        self.data.orient = conv.quat_mul(self.data.orient, quat_inc)
+
+    def update_velocity(self, spec_force):
+        quat = self.data.orient
+        vel = self.data.vel
+        R = 0.5*(conv.quat_to_rot(self.prev_orient)+conv.quat_to_rot(quat))
+        self.prev_vel = vel
+        self.data.vel = vel+self.dt*(np.dot(R,spec_force)+gravity_n)
+
+    def update_poisition(self):
+        self.data.pos = self.data.pos+self.dt*(self.prev_vel+self.data.vel)/2.
+
+    def correct_biases(self, spec_force, ang_rate):
+        return spec_force-self.data.acc_bias, ang_rate-self.data.gyr_bias
+    
+    def update_bias(self, delta_bias_acc, delta_bias_gyr):
+        self.data.acc_bias -= delta_bias_acc
+        self.data.gyr_bias -= delta_bias_gyr
+
+    def correct_estimates(self, delta_ang, delta_vel, delta_pos):
+        delta_quat = np.hstack((delta_ang/2,1))
+        delta_quat = delta_quat/np.linalg.norm(delta_quat)
+        self.data.orient = conv.quat_mul(delta_quat,self.data.orient)
+        self.data.vel += delta_vel
+        self.data.pos += delta_pos
+        return self.data.orient, self.data.vel, self.data.pos
+
+class NavigationFilter():
+    def __init__(self):
+        pass
+
+    def measurement_equation(self, state):
+        pos = self.position_estimate+state
+        return np.hstack((position, quaternion))
+        pass
+
+    def step(self, measurement):
+        pass
+
+
+
+
+
+
+
+
+
+
+
 
 class NavigationSystem:
     def __init__(self, q0, v0, p0, imu_time, gps_time):
@@ -95,50 +176,3 @@ class NavigationSystem:
         return Q_out, Qc
 
 
-class Strapdown:
-    def __init__(self, q0, v0, p0, dt):
-        self.orient = q0
-        self.vel = v0
-        self.pos = p0
-        self.dt = dt
-        self.bias_acc = np.zeros(3)
-        self.bias_gyr = np.zeros(3)
-    
-    def step(self, spec_force, ang_rate):
-        spec_force, ang_rate = self.correct_biases(spec_force, ang_rate)
-        self.update_attitude(ang_rate)
-        self.update_velocity(spec_force)
-        self.update_poisition()
-        return self.orient, self.vel, self.pos
-
-    def update_attitude(self, ang_rate):
-        qv = self.orient[0:3]
-        qw = self.orient[3]
-        ang_arg = np.linalg.norm(ang_rate)*self.dt/2
-        quat_inc = np.hstack((ang_rate/np.linalg.norm(ang_rate)*np.sin(ang_arg), np.cos(ang_arg)))
-        T = 0.5*np.vstack((np.array(qw*np.eye(3)+sksym(qv)),-qv))
-        self.prev_orient = self.orient
-        self.orient = conv.quat_mul(self.orient, quat_inc)
-
-    def update_velocity(self, spec_force):
-        R = 0.5*(conv.quat_to_rot(self.prev_orient)+conv.quat_to_rot(self.orient))
-        self.prev_vel = self.vel
-        self.vel = self.vel+self.dt*(np.dot(R,spec_force)+gravity_n)
-
-    def update_poisition(self):
-        self.pos = self.pos+self.dt*(self.prev_vel+self.vel)/2.
-
-    def correct_biases(self, spec_force, ang_rate):
-        return spec_force-self.bias_acc, ang_rate-self.bias_gyr
-    
-    def update_bias(self, delta_bias_acc, delta_bias_gyr):
-        self.bias_acc -= delta_bias_acc
-        self.bias_gyr -= delta_bias_gyr
-
-    def correct_estimates(self, delta_ang, delta_vel, delta_pos):
-        delta_quat = np.hstack((delta_ang/2,1))
-        delta_quat = delta_quat/np.linalg.norm(delta_quat)
-        self.orient = conv.quat_mul(delta_quat,self.orient)
-        self.vel += delta_vel
-        self.pos += delta_pos
-        return self.orient, self.vel, self.pos

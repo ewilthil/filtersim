@@ -6,8 +6,8 @@ from scipy.integrate import odeint
 
 import matplotlib.pyplot as plt
 
-class ShipPlant:
-    def __init__(self, Q, D_nu, T_xi, state_init):
+class ShipPlant(object):
+    def __init__(self, Q, D_nu, T_xi):
         self.pos = [0, 1, 2]
         self.eul = [3, 4, 5]
         self.eta = self.pos+self.eul
@@ -17,7 +17,7 @@ class ShipPlant:
         self.noise_cov = Q
         self.D_nu = D_nu
         self.D_xi = -np.linalg.inv(T_xi)
-        self.state = np.hstack((state_init, np.zeros(6)))
+        self.state = np.zeros(18)
         self.noise = np.zeros(6)
 
     def kinematic_ode(self, x):
@@ -48,10 +48,21 @@ class ShipPlant:
         self.state = odeint(self.ode, self.state, np.array([0, dt]))[-1,:]
         state_diff = self.ode(self.state, 0)
         return self.state, state_diff
+    
+    def initialize(self, eta, nu):
+        self.state = np.hstack((eta, nu, np.zeros(6)))
+        return self.state, self.ode(self.state, 0)
 
-cargo_ship = {
+cargo_plant = {
         'D_nu' : -np.diag((0.5, 1, 10, 10, 10, 1)),
         'T_xi' : np.diag((30, 1, 30, 10, 10, 60)),
         'Q' : np.diag((1e-2, 1e-2, 1e-4, 1e-4, 1e-4, 5e-4)),
-        'state_init' : np.array([0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0]),
         }
+
+class TargetPlant(object):
+    def __init__(self):
+        pass
+
+    def step(self):
+        pass
+

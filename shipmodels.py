@@ -5,73 +5,33 @@ from scipy.stats import multivariate_normal
 default_NCV_params = {'sigma_x' : 1, 'sigma_y' : 1}
 default_IOU_params = {'sigma_x' : 1, 'sigma_y' : 1, 'theta_x' : 1, 'theta_y' : 1, 'mu_x' : 0, 'mu_y' : 0}
 
-def set_model(name, args):
-    NCV = 'NCV'
-    IOU = 'IOU'
-    if name is NCV:
-        sigma_x = args[NCV]['sigma_x']
-        sigma_y = args[NCV]['sigma_y']
-        def A(state):
-            return np.array([state[1], 0, state[3], 0])
-        def B(state):
-            B = np.zeros((4,2))
-            B[1,0] = sigma_x
-            B[3,1] = sigma_y
-            return B
-    elif name is IOU:
-        sigma_x = args[IOU]['sigma_x']
-        sigma_y = args[IOU]['sigma_y']
-        theta_x = args[IOU]['theta_x']
-        theta_y = args[IOU]['theta_y']
-        mu_x = args[IOU]['mu_x']
-        mu_y = args[IOU]['mu_y']
-        def A(state):
-            return np.array([state[1], theta_x*(mu_x-state[1]), state[3], theta_y*(mu_y-state[3])])
-        def B(state):
-            B = np.zeros((4,2))
-            B[1,0] = sigma_x
-            B[3,1] = sigma_y
-            return B
-    return A, B
-
-class MouModel(object):
-    def __init__(self, time, g1, g2, sigma, v_ref, x0):
-        self.time = time
-        self.states = np.zeros((2, len(time)))
-        self.g1 = g1
-        self.g2 = g2
+class IntegratedOU(object):
+    def __init__(self, theta, mu, sigma):
+        self.theta = theta
+        self.v_ref = mu
         self.sigma = sigma
-        self.v_ref = v_ref
-        self.states[:,0] = x0
-        self.x_now = x0
-        self.x_ref = np.array([0, v_ref])
-        self.A = np.array([[0, 1],[-g1, -g2]])
-        self.B = np.array([0, sigma])
-    
-    def step(self, dt):
-        v = np.sqrt(dt)*np.random.randn(1)
-        x_next = self.x_now+self.A.dot(self.x_now-self.x_ref)*dt+self.B*(v)
-        self.x_now = x_next
-        return x_next
+
+    def get_model(self, x):
+        return np.array([x[1], -self.theta*(x[1]-self.v_ref)]), np.array([0, self.sigma])
 
 class TargetShip(object):
-    def __init__(self,model, time, model_args):
+    def __init__(self, time, x_init, y_init, x_model, y_model):
         self.time = time
         self.dt = time[1]-time[0]
         self.states = np.zeros((4, len(time)))
-        self.A, self.B = set_model(model, model_args)
-        self.noise = multivariate_normal(np.zeros(2),self.dt*np.identity(2)).rvs(size=len(time)).T
+        self.states[:2,0] = x_init
+        self.states[2:,0] = y_init
+        self.x_model = x_model
+        self.y_model = y_model
+        self.noise = multivariate_normal(0, np.sqrt(self.dt)).rvs(size=(2, len(time)))
 
-    def set_initial_conditions(self, pos_0, vel_0):
-        x0 = np.array([pos_0[0], vel_0[0], pos_0[1], vel_0[1]])
-        self.states[:,0] = x0
-
-    def step(self, idx, t_new):
-        x_now = self.states[:,idx-1]
-        self.states[:,idx] = x_now+self.A(x_now)*self.dt+self.B(x_now).dot(self.noise[:,idx])
-
-    def update_model(self, name, args):
-        self.A, self.B = set_model(name, args)
+    def step(self, idx):
+        x_now = self.states[:2, idx-1]
+        y_now = self.states[2:, idx-1]
+        F_x, G_x = self.x_model.get_model(x_now)
+        F_y, G_y = self.y_model.get_model(y_now)
+        self.states[:2,idx] = x_now+F_x*self.dt+G_x*self.noise[0,idx]
+        self.states[2:,idx] = y_now+F_y*self.dt+G_y*self.noise[1,idx]
 
     def plot_position(self, ax):
         ax.plot(self.states[2,:], self.states[0,:])

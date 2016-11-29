@@ -13,9 +13,7 @@ for t_idx, t in enumerate(time):
     if t_idx is 0:
         pass
     else:
-        [target.step(t_idx) for target in targets]
-    if t >= T/2:
-        target.y_model = iou_model_x
+        [target.step(t_idx, v_ref) for target in targets]
 pos_fig, pos_ax = plt.subplots()
 vel_fig, vel_ax = plt.subplots(ncols=2)
 for target in targets:

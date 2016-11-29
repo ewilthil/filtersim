@@ -33,27 +33,21 @@ class IntegratedOU(object):
     default_theta = 0.5*np.ones(2)
     default_sigma = 1*np.ones(2)
     def __init__(self, dt, thetas=default_theta, sigmas=default_sigma):
-        A = [None, None]
-        B = [None, None]
-        Q = [None, None]
-        G = [None, None]
+        Ad = [None, None]
+        Bd = [None, None]
+        Qd = [None, None]
+        G = np.array([[0], [1]])
         for i, _ in enumerate(thetas):
-            A[i] = np.array([[0,1],[0, -thetas[i]]])
-            B[i] = np.array([[0], [thetas[i]]])
-            G[i] = np.array([[0], [1]])
-            Q[i] = sigmas[i]*G[i].dot(G[i].T)
-        #A = block_diag(*A)
-        #B = block_diag(*B)
-        #Q = block_diag(*Q)
-        #G = block_diag(*G)
-        A = A[0]
-        B = B[0]
-        Q = Q[0]
-        G = G[0]
-        self.F, self.B, self.Q = van_loan_discretization(dt, A, B, Q)
+            A = np.array([[0,1],[0, -thetas[i]]])
+            B = np.array([[0], [thetas[i]]])
+            Q = sigmas[i]*G.dot(G.T)
+            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
+        self.Ad = block_diag(*Ad)
+        self.Bd = block_diag(*Bd)
+        self.Qd = block_diag(*Qd)
         
     def step(self, x, u, v):
-        return self.F.dot(x)+self.B.dot(u)+v
+        return self.Ad.dot(x)+self.Bd.dot(u)+v
 
 class DiscreteWNA(object):
     def __init__(self):
@@ -66,8 +60,7 @@ class TargetShip(object):
         self.states = np.zeros((len(x0), len(time)))
         self.states[:,0] = x0
         self.model = model
-        #self.noise = multivariate_normal(np.zeros_like(x0), model.Q).rvs(size=len(time))
-        self.noise = multivariate_normal(np.zeros(2), model.Q).rvs(size=len(time))
+        self.noise = multivariate_normal(np.zeros_like(x0), model.Qd).rvs(size=len(time)).T
 
     def step(self, idx, v_ref):
         x_now = self.states[:, idx-1]

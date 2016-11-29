@@ -1,46 +1,88 @@
 import numpy as np
-from scipy.linalg import block_diag
+from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
 
-default_NCV_params = {'sigma_x' : 1, 'sigma_y' : 1}
-default_IOU_params = {'sigma_x' : 1, 'sigma_y' : 1, 'theta_x' : 1, 'theta_y' : 1, 'mu_x' : 0, 'mu_y' : 0}
+def van_loan_discretization(dt, A, B=None, Q=None):
+    n = A.shape[0]
+    def get_input_mapping(A, B):
+        if len(B.shape) == 1:
+            B = B[np.newaxis].T
+        m = B.shape[1]
+        F_row_1 = np.hstack((A, B))
+        F_row_2 = np.hstack((np.zeros((m,n)), np.zeros((m,m))))
+        F = np.vstack((F_row_1, F_row_2))
+        Fd = expm(F*dt)
+        Ad = Fd[:n, :n]
+        Bd = Fd[:n, n:]
+        return Ad, Bd
+    def get_noise_mapping(A, Q):
+        F_row_1 = np.hstack((-A, Q))
+        F_row_2 = np.hstack((np.zeros((n, n)), A.T))
+        F = np.vstack((F_row_1, F_row_2))
+        Fd = expm(F*dt)
+        Ad = Fd[n:, n:].T
+        Qd = Ad.dot(Fd[:n, n:])
+        return Ad, Qd
+    if B is not None:
+        Ad, Bd = get_input_mapping(A, B)
+    if Q is not None:
+        Ad, Qd = get_noise_mapping(A, Q)
+    return Ad, Bd, Qd
 
 class IntegratedOU(object):
-    def __init__(self, theta, mu, sigma):
-        self.theta = theta
-        self.v_ref = mu
-        self.sigma = sigma
+    default_theta = 0.5*np.ones(2)
+    default_sigma = 1*np.ones(2)
+    def __init__(self, dt, thetas=default_theta, sigmas=default_sigma):
+        A = [None, None]
+        B = [None, None]
+        Q = [None, None]
+        G = [None, None]
+        for i, _ in enumerate(thetas):
+            A[i] = np.array([[0,1],[0, -thetas[i]]])
+            B[i] = np.array([[0], [thetas[i]]])
+            G[i] = np.array([[0], [1]])
+            Q[i] = sigmas[i]*G[i].dot(G[i].T)
+        #A = block_diag(*A)
+        #B = block_diag(*B)
+        #Q = block_diag(*Q)
+        #G = block_diag(*G)
+        A = A[0]
+        B = B[0]
+        Q = Q[0]
+        G = G[0]
+        self.F, self.B, self.Q = van_loan_discretization(dt, A, B, Q)
+        
+    def step(self, x, u, v):
+        return self.F.dot(x)+self.B.dot(u)+v
 
-    def get_model(self, x):
-        return np.array([x[1], -self.theta*(x[1]-self.v_ref)]), np.array([0, self.sigma])
+class DiscreteWNA(object):
+    def __init__(self):
+        self.sigmas = sigmas
 
 class TargetShip(object):
-    def __init__(self, time, x_init, y_init, x_model, y_model):
+    def __init__(self, time, model, x0):
         self.time = time
         self.dt = time[1]-time[0]
-        self.states = np.zeros((4, len(time)))
-        self.states[:2,0] = x_init
-        self.states[2:,0] = y_init
-        self.x_model = x_model
-        self.y_model = y_model
-        self.noise = multivariate_normal(0, np.sqrt(self.dt)).rvs(size=(2, len(time)))
+        self.states = np.zeros((len(x0), len(time)))
+        self.states[:,0] = x0
+        self.model = model
+        #self.noise = multivariate_normal(np.zeros_like(x0), model.Q).rvs(size=len(time))
+        self.noise = multivariate_normal(np.zeros(2), model.Q).rvs(size=len(time))
 
-    def step(self, idx):
-        x_now = self.states[:2, idx-1]
-        y_now = self.states[2:, idx-1]
-        F_x, G_x = self.x_model.get_model(x_now)
-        F_y, G_y = self.y_model.get_model(y_now)
-        self.states[:2,idx] = x_now+F_x*self.dt+G_x*self.noise[0,idx]
-        self.states[2:,idx] = y_now+F_y*self.dt+G_y*self.noise[1,idx]
+    def step(self, idx, v_ref):
+        x_now = self.states[:, idx-1]
+        self.states[:,idx] = self.model.step(x_now, v_ref, self.noise[:,idx])
 
     def plot_position(self, ax):
         ax.plot(self.states[2,:], self.states[0,:])
         ax.plot(self.states[2,0], self.states[0,0], 'ko')
         ax.set_aspect('equal')
 
-    def plot_veloicty(self, axes):
+    def plot_velocity(self, axes):
         axes[0].plot(self.time, self.states[1,:])
         axes[1].plot(self.time, self.states[3,:])
+
+
 
 
 class OwnShip(object):

@@ -4,14 +4,10 @@ import matplotlib.pyplot as plt
 T = 300
 dt = 0.01
 time = np.linspace(0, T, (T+dt)/dt, endpoint=True)
-N_0 = np.array([0, 10])
-E_0 = np.array([0, 0])
-t_0 = 0
-theta = 0.5
-sigma = 0.3
-iou_model_x = shipmodels.IntegratedOU(theta, N_0[1], sigma)
-iou_model_y = shipmodels.IntegratedOU(theta, E_0[1], sigma)
-target = shipmodels.TargetShip(time, N_0, E_0, iou_model_x, iou_model_y)
+x0 = np.array([0, 10, 0, 0])
+v_ref = np.array([x0[1], x0[3]])
+iou_model = shipmodels.IntegratedOU(dt)
+target = shipmodels.TargetShip(time, iou_model, x0)
 targets = [target]
 for t_idx, t in enumerate(time):
     if t_idx is 0:
@@ -24,5 +20,5 @@ pos_fig, pos_ax = plt.subplots()
 vel_fig, vel_ax = plt.subplots(ncols=2)
 for target in targets:
     target.plot_position(pos_ax)
-    target.plot_veloicty(vel_ax)
+    target.plot_velocity(vel_ax)
 plt.show()

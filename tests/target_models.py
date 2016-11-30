@@ -12,8 +12,7 @@ target = shipmodels.TargetShip(time, iou_model, x0)
 target_dwna = shipmodels.TargetShip(time, dwna_model, x0)
 targets = [target, target_dwna]
 for t_idx, t in enumerate(time):
-    if t_idx > 0:
-        [target.step(t_idx, v_ref) for target in targets]
+    [target.step(t_idx, v_ref) for target in targets]
 
 pos_fig, pos_ax = plt.subplots()
 vel_fig, vel_ax = plt.subplots(ncols=2)

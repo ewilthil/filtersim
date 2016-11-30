@@ -33,7 +33,7 @@ def van_loan_discretization(dt, A, B=None, Q=None):
         Qd = None
     return Ad, Bd, Qd
 
-class Model(object):
+class LinearStochasticModel(object):
     def __init__(self, dt, n_dim, parameters=dict()):
         parameters = self.set_parameters(n_dim, parameters)
         Ad = [None for _ in range(n_dim)]
@@ -56,7 +56,7 @@ class Model(object):
                 new_params[param_name] = params[param_name]
         return new_params
 
-class IntegratedOU(Model):
+class IntegratedOU(LinearStochasticModel):
     def default_parameters(self, n):
         params = {'sigmas' : 0.3*np.ones(n),
                 'thetas' : 0.5*np.ones(n),
@@ -72,7 +72,7 @@ class IntegratedOU(Model):
         Q = sigma*G.dot(G.T)
         return A, B, Q
 
-class DiscreteWNA(Model):
+class DiscreteWNA(LinearStochasticModel):
     def default_parameters(self, n):
         params = {'sigmas' : 0.3*np.ones(n)}
         return params
@@ -85,27 +85,20 @@ class DiscreteWNA(Model):
         Q = sigma*G.dot(G.T)
         return A, B, Q
 
-class IntegratedMOU(object):
+class IntegratedMOU(LinearStochasticModel):
+    def default_parameters(self, n):
+        params = {'thetas' : 0.5*np.zeros(n),
+                'sigmas' : 0.1*np.zeros(n),
+                }
+        return params
 
-    default_theta = 1*np.ones(2)
-    default_sigma = 0.1*np.ones(2)
-
-    def __init__(self, dt, thetas=default_theta, sigmas = default_sigma):
-        Ad = [None, None]
-        Bd = [None, None]
-        Qd = [None, None]
+    def matrices_1D(self, parameters, index):
+        theta = parameters['thetas'][index]
+        sigma = parameters['sigmas'][index]
+        A = np.array([[0, 1, 0], [0, 0, 1], [-theta, 0, 0]])
+        B = np.array([[0], [0], [theta]])
         G = np.array([[0], [0], [1]])
-        for i, _ in enumerate(thetas):
-            A = np.array([[0, 1, 0],[0, 0, 1],[-thetas[i], 0, 0]])
-            B = np.array([[0], [0], [thetas[i]]])
-            Q = sigmas[i]*G.dot(G.T)
-            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
-        self.Ad = block_diag(*Ad)
-        self.Bd = block_diag(*Bd)
-        self.Qd = block_diag(*Qd)
-
-    def step(self, x, u, v):
-        return self.Ad.dot(x)+self.Bd.dot(u)+v
+        Q = sigma*G.dot(G.T)
 
 class TargetShip(object):
     def __init__(self, time, model, x0):
@@ -117,8 +110,9 @@ class TargetShip(object):
         self.noise = multivariate_normal(np.zeros_like(x0), model.Qd).rvs(size=len(time)).T
 
     def step(self, idx, v_ref):
-        x_now = self.states[:, idx-1]
-        self.states[:,idx] = self.model.step(x_now, v_ref, self.noise[:,idx])
+        if idx > 0:
+            x_now = self.states[:, idx-1]
+            self.states[:,idx] = self.model.step(x_now, v_ref, self.noise[:,idx])
 
     def plot_position(self, ax):
         ax.plot(self.states[2,:], self.states[0,:])
@@ -129,8 +123,37 @@ class TargetShip(object):
         axes[0].plot(self.time, self.states[1,:])
         axes[1].plot(self.time, self.states[3,:])
 
-class Ownship(object):
+class NonlinearStochasticModel(object):
     pass
+
+class Ownship(object):
+    def __init__(self, time, model, x0):
+        pass
+
+    def step(self, idx, ref):
+        if idx > 0:
+            x_now = self.states[:, idx-1]
+        nu_ref = np.array([ref[0], 0, 0, 0, 0, ref[1]])
+
+    def kinematic_ode(self, x, u, v):
+        pass
+
+    def kinetic_ode(self, x, u, v):
+        pass
+
+    def plot_position(self, ax):
+        pass
+
+    def plot_velocity(self, axes):
+        pass
+
+
+
+
+
+
+
+
 
 
 
@@ -195,7 +218,7 @@ class OwnShip(object):
     def get_gps(self, R=None):
         pass
 
-class Model:
+class ModelDeprecated:
     def __init__(self, D, T, Q, init_state, time_vector):
         self.D = D
         self.T = T

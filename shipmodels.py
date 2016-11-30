@@ -25,22 +25,28 @@ def van_loan_discretization(dt, A, B=None, Q=None):
         return Ad, Qd
     if B is not None:
         Ad, Bd = get_input_mapping(A, B)
+    else:
+        Bd = None
     if Q is not None:
         Ad, Qd = get_noise_mapping(A, Q)
+    else:
+        Qd = None
     return Ad, Bd, Qd
 
 class IntegratedOU(object):
-    default_theta = 0.5*np.ones(2)
-    default_sigma = 1*np.ones(2)
-    def __init__(self, dt, thetas=default_theta, sigmas=default_sigma):
-        Ad = [None, None]
-        Bd = [None, None]
-        Qd = [None, None]
-        G = np.array([[0], [1]])
-        for i, _ in enumerate(thetas):
-            A = np.array([[0,1],[0, -thetas[i]]])
-            B = np.array([[0], [thetas[i]]])
-            Q = sigmas[i]*G.dot(G.T)
+    def default_theta(self, n): return 0.5*np.ones(n)
+    def default_sigma(self, n): return 0.3*np.ones(n)
+
+    def __init__(self, dt, n_dim, thetas=None, sigmas=None):
+        if thetas is None:
+            thetas = self.default_theta(n_dim)
+        if sigmas is None:
+            sigmas = self.default_sigma(n_dim)
+        Ad = [None for _ in range(n_dim)]
+        Bd = [None for _ in range(n_dim)]
+        Qd = [None for _ in range(n_dim)]
+        for i in range(n_dim):
+            A, B, Q = self.matrices_1D(thetas[i], sigmas[i])
             Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
         self.Ad = block_diag(*Ad)
         self.Bd = block_diag(*Bd)
@@ -49,9 +55,61 @@ class IntegratedOU(object):
     def step(self, x, u, v):
         return self.Ad.dot(x)+self.Bd.dot(u)+v
 
+    def matrices_1D(self, theta, sigma):
+        A = np.array([[0, 1], [0, -theta]])
+        B = np.array([[0], [theta]])
+        G = np.array([[0], [1]])
+        Q = sigma*G.dot(G.T)
+        return A, B, Q
+
+
 class DiscreteWNA(object):
-    def __init__(self):
-        self.sigmas = sigmas
+    def default_sigma(self, n): return 0.3*np.ones(n)
+
+    def __init__(self, dt, n_dim, sigmas=None):
+        if sigmas is None:
+            sigmas = self.default_sigma(n_dim)
+        Ad = [None for _ in range(n_dim)]
+        Bd = [None for _ in range(n_dim)]
+        Qd = [None for _ in range(n_dim)]
+        for i, _ in enumerate(sigmas):
+            A, B, Q = self.matrices_1D(sigmas[i])
+            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
+        self.Ad = block_diag(*Ad)
+        self.Bd = block_diag(*Bd)
+        self.Qd = block_diag(*Qd)
+
+    def step(self, x, u, v):
+        return self.Ad.dot(x)+v
+
+    def matrices_1D(self, sigma):
+        A = np.array([[0, 1], [0, 0]])
+        B = np.array([[0], [0]])
+        G = np.array([[0], [1]])
+        Q = sigma*G.dot(G.T)
+        return A, B, Q
+
+class IntegratedMOU(object):
+
+    default_theta = 1*np.ones(2)
+    default_sigma = 0.1*np.ones(2)
+
+    def __init__(self, dt, thetas=default_theta, sigmas = default_sigma):
+        Ad = [None, None]
+        Bd = [None, None]
+        Qd = [None, None]
+        G = np.array([[0], [0], [1]])
+        for i, _ in enumerate(thetas):
+            A = np.array([[0, 1, 0],[0, 0, 1],[-thetas[i], 0, 0]])
+            B = np.array([[0], [0], [thetas[i]]])
+            Q = sigmas[i]*G.dot(G.T)
+            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
+        self.Ad = block_diag(*Ad)
+        self.Bd = block_diag(*Bd)
+        self.Qd = block_diag(*Qd)
+
+    def step(self, x, u, v):
+        return self.Ad.dot(x)+self.Bd.dot(u)+v
 
 class TargetShip(object):
     def __init__(self, time, model, x0):
@@ -75,6 +133,8 @@ class TargetShip(object):
         axes[0].plot(self.time, self.states[1,:])
         axes[1].plot(self.time, self.states[3,:])
 
+class Ownship(object):
+    pass
 
 
 
@@ -113,7 +173,6 @@ class OwnShip(object):
         return -self.T_inv.dot(self.state[self.disturbance])+w_c
 
     def disturbance_step(self, dt, w):
-        from scipy.linalg import expm
         dist_Phi = expm(-self.T_inv*dt)
         return dist_Phi.dot(self.state[self.disturbance])+w
 
@@ -138,11 +197,6 @@ class OwnShip(object):
         return np.array([self.x_dot[3], 0, 0, 0, 0, self.x_dot[2]])+v
 
     def get_gps(self, R=None):
-        pass
-
-class Ownship2D(OwnShip):
-    def __init__(self, x0, Ku, Kr):
-        # Use super to initiate the full state
         pass
 
 class Model:

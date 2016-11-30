@@ -33,56 +33,52 @@ def van_loan_discretization(dt, A, B=None, Q=None):
         Qd = None
     return Ad, Bd, Qd
 
-class IntegratedOU(object):
-    def default_theta(self, n): return 0.5*np.ones(n)
-    def default_sigma(self, n): return 0.3*np.ones(n)
-
-    def __init__(self, dt, n_dim, thetas=None, sigmas=None):
-        if thetas is None:
-            thetas = self.default_theta(n_dim)
-        if sigmas is None:
-            sigmas = self.default_sigma(n_dim)
+class Model(object):
+    def __init__(self, dt, n_dim, parameters=dict()):
+        parameters = self.set_parameters(n_dim, parameters)
         Ad = [None for _ in range(n_dim)]
         Bd = [None for _ in range(n_dim)]
         Qd = [None for _ in range(n_dim)]
         for i in range(n_dim):
-            A, B, Q = self.matrices_1D(thetas[i], sigmas[i])
+            A, B, Q = self.matrices_1D(parameters, i)
             Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
         self.Ad = block_diag(*Ad)
         self.Bd = block_diag(*Bd)
         self.Qd = block_diag(*Qd)
-        
+
     def step(self, x, u, v):
         return self.Ad.dot(x)+self.Bd.dot(u)+v
 
-    def matrices_1D(self, theta, sigma):
+    def set_parameters(self, n, params):
+        new_params = self.default_parameters(n)
+        for param_name in new_params.keys():
+            if param_name in params.keys():
+                new_params[param_name] = params[param_name]
+        return new_params
+
+class IntegratedOU(Model):
+    def default_parameters(self, n):
+        params = {'sigmas' : 0.3*np.ones(n),
+                'thetas' : 0.5*np.ones(n),
+                }
+        return params
+
+    def matrices_1D(self, parameters, index):
+        theta = parameters['thetas'][index]
+        sigma = parameters['sigmas'][index]
         A = np.array([[0, 1], [0, -theta]])
         B = np.array([[0], [theta]])
         G = np.array([[0], [1]])
         Q = sigma*G.dot(G.T)
         return A, B, Q
 
+class DiscreteWNA(Model):
+    def default_parameters(self, n):
+        params = {'sigmas' : 0.3*np.ones(n)}
+        return params
 
-class DiscreteWNA(object):
-    def default_sigma(self, n): return 0.3*np.ones(n)
-
-    def __init__(self, dt, n_dim, sigmas=None):
-        if sigmas is None:
-            sigmas = self.default_sigma(n_dim)
-        Ad = [None for _ in range(n_dim)]
-        Bd = [None for _ in range(n_dim)]
-        Qd = [None for _ in range(n_dim)]
-        for i, _ in enumerate(sigmas):
-            A, B, Q = self.matrices_1D(sigmas[i])
-            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
-        self.Ad = block_diag(*Ad)
-        self.Bd = block_diag(*Bd)
-        self.Qd = block_diag(*Qd)
-
-    def step(self, x, u, v):
-        return self.Ad.dot(x)+v
-
-    def matrices_1D(self, sigma):
+    def matrices_1D(self, parameters, index):
+        sigma = parameters['sigmas'][index]
         A = np.array([[0, 1], [0, 0]])
         B = np.array([[0], [0]])
         G = np.array([[0], [1]])

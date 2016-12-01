@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
+from autopy.conversion import euler_angles_to_matrix
+import matplotlib.pyplot as plt
+from ipdb import set_trace
 
 def van_loan_discretization(dt, A, B=None, Q=None):
     n = A.shape[0]
@@ -32,6 +35,10 @@ def van_loan_discretization(dt, A, B=None, Q=None):
     else:
         Qd = None
     return Ad, Bd, Qd
+
+def plot_with_title(ax, x, y, title):
+    ax.plot(x, y)
+    ax.set_title(title)
 
 class LinearStochasticModel(object):
     def __init__(self, dt, n_dim, parameters=dict()):
@@ -118,160 +125,107 @@ class TargetShip(object):
         ax.plot(self.states[2,:], self.states[0,:])
         ax.plot(self.states[2,0], self.states[0,0], 'ko')
         ax.set_aspect('equal')
+        ax.set_title('Position')
+        ax.set_xlabel('North')
+        ax.set_ylabel('East')
 
     def plot_velocity(self, axes):
         axes[0].plot(self.time, self.states[1,:])
+        axes[0].set_title('Velocity (north)')
         axes[1].plot(self.time, self.states[3,:])
+        axes[1].set_title('Velocity (east)')
 
 class NonlinearStochasticModel(object):
-    pass
+    def __init__(self):
+        self.theta_eta = np.diag((0, 0, 2, 5, 5, 0))
+        self.theta_nu = np.diag((2, 2, 10, 10, 10, 10))
+        self.theta_tau = np.diag((0.5, 0.5, 1, 1, 1, 1,))
+        self.Qd = np.diag((1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3))
+        self.G = np.vstack((np.zeros((12,6)), np.identity(6)))
+        self.B = np.vstack((np.zeros((12,12)), np.hstack((self.theta_eta, self.theta_nu))))
 
+    def step(self, x, u, v, dt):
+        return x+self.f(x)*dt+self.B.dot(u)*dt+self.G.dot(v)
+
+    def f(self, x):
+        f_tilde = np.zeros((18,18))
+        f_tilde[:6,6:12] = self.J(x[:6])
+        A = np.zeros((18,18))
+        A[6:12,12:] = np.identity(6)
+        A[12:,:6] = -self.theta_eta
+        A[12:,6:12] = -self.theta_nu
+        A[12:, 12:] = -self.theta_tau
+        return (A+f_tilde).dot(x)
+    
+    def J(self, eta):
+        ang = eta[3:]
+        R = euler_angles_to_matrix(ang)
+        sphi = np.sin(ang[0])
+        cphi = np.cos(ang[0])
+        ctheta = np.cos(ang[1])
+        ttheta = np.tan(ang[1])
+        T = np.array([[1, sphi*ttheta, cphi*ttheta], [0, cphi, -sphi], [0, sphi/ctheta, cphi/ctheta]])
+        return block_diag(R, T)
+
+        
 class Ownship(object):
     def __init__(self, time, model, x0):
-        pass
+        self.time = time
+        self.dt = time[1]-time[0]
+        self.states = np.zeros((len(x0), len(time)))
+        self.r_ref = np.zeros_like(time)
+        self.states[:,0] = x0
+        self.model = model
+        self.noise = multivariate_normal(np.zeros(model.Qd.shape[0]), model.Qd).rvs(size=len(time)).T
 
-    def step(self, idx, ref):
+    def step(self, idx, u_ref, psi_ref):
         if idx > 0:
+            self.r_ref[idx] = -0.5*(self.states[5, idx-1]-psi_ref)
+            nu_ref = np.array([u_ref, 0, 0, 0, 0, self.r_ref[idx]])
+            eta_ref = np.zeros(6)
+            ref = np.hstack((eta_ref, nu_ref))
             x_now = self.states[:, idx-1]
-        nu_ref = np.array([ref[0], 0, 0, 0, 0, ref[1]])
+            self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)
 
-    def kinematic_ode(self, x, u, v):
-        pass
+    def vel_to_NED(self):
+        vel_B = self.states[6:9,:]
+        ang = self.states[3:6, :]
+        vel_N = np.zeros_like(vel_B)
+        for idx in range(len(self.time)):
+            vel_N[:,idx] = euler_angles_to_matrix(ang[:,idx]).dot(vel_B[:,idx])
+        return vel_N
 
-    def kinetic_ode(self, x, u, v):
-        pass
 
     def plot_position(self, ax):
-        pass
+        ax.plot(self.states[1,:], self.states[0,:])
+        ax.plot(self.states[1,0], self.states[0,0], 'ko')
+        ax.set_aspect('equal')
 
     def plot_velocity(self, axes):
-        pass
+        vel_N = self.vel_to_NED()
+        axes[0].plot(self.time, vel_N[0,:])
+        axes[1].plot(self.time, vel_N[1,:])
 
+    def plot_velocity_body(self, axes=None):
+        if axes is None:
+            fig, axes = plt.subplots(ncols=2)
+        plot_with_title(axes[0], self.time, self.states[6,:], 'Forward velocity [m/s]')
+        plot_with_title(axes[1], self.time, self.states[7,:], 'Sidways velocity [m/s]')
 
+    def plot_roll_pitch_heave(self, axes=None):
+        vel_ned = self.vel_to_NED()
+        if axes is None:
+            fig, axes = plt.subplots(nrows=3, ncols=2)
+        plot_with_title(axes[0,0], self.time, self.states[2,:], 'Heave position [m]')
+        plot_with_title(axes[0,1], self.time, vel_ned[2,:], 'Heave velocity [m/s]')
+        plot_with_title(axes[1,0], self.time, np.rad2deg(self.states[3,:]), 'Roll angle [deg]')
+        plot_with_title(axes[1,1], self.time, np.rad2deg(self.states[9,:]), 'Roll rate [deg/s]')
+        plot_with_title(axes[2,0], self.time, np.rad2deg(self.states[4,:]), 'Pitch angle [deg]')
+        plot_with_title(axes[2,1], self.time, np.rad2deg(self.states[10,:]), 'Pitch rate [deg/s]')
 
-
-
-
-
-
-
-
-
-class OwnShip(object):
-    kinematic = np.arange(6)
-    kinetic = np.arange(6)+6
-    disturbance = np.arange(6)+12
-    def __init__(self, x0, Ku, Kr):
-        self.Kr = Kr
-        self.Ku = Ku
-        self.state = np.hstack((x0, np.zeros(6)))
-
-    def set_motion_parameters(self):
-        self.T_inv = np.linalg.inv(T)
-        self.D = D
-
-    def set_constant_time(self, dt):
-        pass
-    
-    def ode(self, x, u):
-        pass
-
-    def step(self, u, w):
-        pass
-
-    def kinematic_ode(self):
-        pass
-
-    def kinetic_ode(self, u):
-        pass
-    
-    def kinetic_step(self, u, dt):
-        pass
-    
-    def disturbance_ode(self, w_c):
-        return -self.T_inv.dot(self.state[self.disturbance])+w_c
-
-    def disturbance_step(self, dt, w):
-        dist_Phi = expm(-self.T_inv*dt)
-        return dist_Phi.dot(self.state[self.disturbance])+w
-
-    def step(self, dt, u):
-        self.current_input = u
-        self.x_dot = self.ode(self.state, self.current_input)
-        x_next = self.state + self.x_dot*dt
-        self.state = x_next
-        return self.state, self.x_dot
-
-    def get_pos(self):
-        return np.array([self.x[0], self.x[1]])
-
-    def generate_trajectory(self, dt, u_ref):
-        pass
-
-    def get_imu(self, R=None):
-        if R is None:
-            v = np.zeros(6)
-        else:
-            v = multivariate_normal(cov=R).rvs()
-        return np.array([self.x_dot[3], 0, 0, 0, 0, self.x_dot[2]])+v
-
-    def get_gps(self, R=None):
-        pass
-
-class ModelDeprecated:
-    def __init__(self, D, T, Q, init_state, time_vector):
-        self.D = D
-        self.T = T
-        self.Q = Q
-        self.dt = time_vector[1]-time_vector[0]
-        self.time = time_vector
-        self.K = time_vector.size
-        self.state = np.zeros((nx,self.K))
-        self.state_diff = np.zeros((nx,self.K))
-        self.ref = np.zeros((nx,self.K))
-        self.state[:,0] = init_state
-        self.noise = np.zeros((6,self.K))
-        self.noise_dist = multivariate_normal(cov=Q)
-        self.eta = range(6)
-        self.nu = range(6,12)
-        self.dist = range(12,18)
-        self.eul = range(3,6)
-        self.phi = self.eul[0]
-        self.theta = self.eul[1]
-        self.psi = self.eul[2]
-        self.surge = self.nu[0]
-    
-    def kinematic_ode(self, x):
-        s = lambda ang : np.sin(ang)
-        c = lambda ang : np.cos(ang)
-        t = lambda ang : np.tan(ang)
-        phi, theta, psi = x[self.eul]
-        R = euler_angles_to_matrix(x[self.eul])
-        T = np.array([  [1, s(phi)*t(theta), c(phi)*t(theta)],
-                        [0, c(phi), -s(phi)],
-                        [0, s(phi)/c(theta), c(phi)/c(theta)]])
-        J = block_diag(R,T)
-        return np.dot(J, x[self.nu])
-    
-    def kinetic_ode(self, x,k):
-        return np.dot(self.D, x[self.nu]-self.ref[self.nu, k])+x[self.dist]
-    
-    def disturbance_ode(self, x, k):
-        return np.dot(np.linalg.inv(self.T), x[self.dist])+self.noise[:,k]
-    
-    def ode(self, x, t, k):
-        return np.hstack((self.kinematic_ode(x), self.kinetic_ode(x,k), self.disturbance_ode(x, k)))
-    
-    def step(self, k, ref=None):
-        c_w = 0.1
-        c_p = 0.5
-        c_q = 0.5
-        c_r = 0.4
-        self.ref[self.psi, k] = ref[1]
-        self.ref[self.nu, k] = np.array([ref[0], 0, -c_w*self.state[2, k-1], -c_p*self.state[self.phi, k-1], -c_q*self.state[self.theta, k-1], -c_r*(self.state[self.psi, k-1]-self.ref[self.psi,k])])
-        self.noise[:,k] = self.noise_dist.rvs()
-        if k == 0:
-            pass
-        else:
-            self.state[:,k] = odeint(self.ode, self.state[:,k-1], np.array([0, self.dt]),args=(k,))[-1,:]
-        self.state_diff[:,k] = self.ode(self.state[:,k], 0, k)
+    def plot_yaw(self, axes=None):
+        if axes is None:
+            fig, axes = plt.subplots(ncols=2)
+        plot_with_title(axes[0], self.time, np.rad2deg(self.states[5,:]), 'Yaw [deg]')
+        plot_with_title(axes[1], self.time, np.rad2deg(self.states[11,:]), 'Yaw rate [deg/s]')
+        axes[1].plot(self.time, np.rad2deg(self.r_ref),'k')

@@ -137,9 +137,9 @@ class TargetShip(object):
 
 class NonlinearStochasticModel(object):
     def __init__(self):
-        self.theta_eta = np.diag((0, 0, 2, 5, 5, 0))
-        self.theta_nu = np.diag((2, 2, 10, 10, 10, 10))
-        self.theta_tau = np.diag((0.5, 0.5, 1, 1, 1, 1,))
+        self.theta_eta = np.diag((0, 0, 2, 5, 5, 5))
+        self.theta_nu = np.diag((2, 2, 10, 10, 10, 20))
+        self.theta_tau = np.diag((0.5, 0.5, 1, 1, 1, 5))
         self.Qd = np.diag((1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3))
         self.G = np.vstack((np.zeros((12,6)), np.identity(6)))
         self.B = np.vstack((np.zeros((12,12)), np.hstack((self.theta_eta, self.theta_nu))))
@@ -176,13 +176,13 @@ class Ownship(object):
         self.r_ref = np.zeros_like(time)
         self.states[:,0] = x0
         self.model = model
-        self.noise = multivariate_normal(np.zeros(model.Qd.shape[0]), model.Qd).rvs(size=len(time)).T
+        self.noise = 0*multivariate_normal(np.zeros(model.Qd.shape[0]), model.Qd).rvs(size=len(time)).T
 
     def step(self, idx, u_ref, psi_ref):
         if idx > 0:
-            self.r_ref[idx] = -0.5*(self.states[5, idx-1]-psi_ref)
-            nu_ref = np.array([u_ref, 0, 0, 0, 0, self.r_ref[idx]])
-            eta_ref = np.zeros(6)
+            self.r_ref[idx] = -0*(self.states[5, idx-1]-psi_ref)
+            nu_ref = np.array([u_ref, 0, 0, 0, 0, 0])
+            eta_ref = np.array([0, 0, 0, 0, 0, psi_ref])
             ref = np.hstack((eta_ref, nu_ref))
             x_now = self.states[:, idx-1]
             self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)

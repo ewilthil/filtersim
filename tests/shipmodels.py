@@ -15,9 +15,17 @@ ownship = shipmodels.Ownship(time, ownship_model, x0_ownship)
 target = shipmodels.TargetShip(time, iou_model, x0)
 target_dwna = shipmodels.TargetShip(time, dwna_model, x0)
 targets = [target, target_dwna]
+def psi_ref(t):
+    if t < 150:
+        return 0
+    elif t > 170:
+        return 45
+    else:
+        return (t-150)*2.25
 for t_idx, t in enumerate(time):
     [target.step(t_idx, v_ref) for target in targets]
-    ownship.step(t_idx, 10, 0)
+    ownship.step(t_idx, 10, np.deg2rad(psi_ref(t)))
+
 
 pos_fig, pos_ax = plt.subplots()
 vel_fig, vel_ax = plt.subplots(ncols=2)

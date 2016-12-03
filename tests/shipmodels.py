@@ -4,16 +4,16 @@ import matplotlib.pyplot as plt
 T = 300
 dt = 0.01
 time = np.linspace(0, T, (T+dt)/dt, endpoint=True)
-x0 = np.array([0, 10, 0, 0])
-v_ref = np.array([x0[1], x0[3]])
+x0_target = np.array([0, 10, 0, 0])
+v_ref_target = np.array([x0_target[1], x0_target[3]])
 iou_model = shipmodels.IntegratedOU(dt, 2)
 dwna_model = shipmodels.DiscreteWNA(dt, 2)
 ownship_model = shipmodels.NonlinearStochasticModel()
 x0_ownship = np.zeros(18)
 x0_ownship[6] = 10
 ownship = shipmodels.Ownship(time, ownship_model, x0_ownship)
-target = shipmodels.TargetShip(time, iou_model, x0)
-target_dwna = shipmodels.TargetShip(time, dwna_model, x0)
+target = shipmodels.TargetShip(time, iou_model, x0_target)
+target_dwna = shipmodels.TargetShip(time, dwna_model, x0_target)
 targets = [target, target_dwna]
 def psi_ref(t):
     if t < 150:
@@ -23,7 +23,7 @@ def psi_ref(t):
     else:
         return (t-150)*2.25
 for t_idx, t in enumerate(time):
-    [target.step(t_idx, v_ref) for target in targets]
+    [target.step(t_idx, v_ref_target) for target in targets]
     ownship.step(t_idx, 10, np.deg2rad(psi_ref(t)))
 
 

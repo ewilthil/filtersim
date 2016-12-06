@@ -28,7 +28,7 @@ for t_idx, t in enumerate(time):
 
 
 pos_fig, pos_ax = plt.subplots()
-vel_fig, vel_ax = plt.subplots(ncols=2)
+vel_fig, vel_ax = plt.subplots(ncols=3)
 for target in targets:
     target.plot_position(pos_ax)
     target.plot_velocity(vel_ax)

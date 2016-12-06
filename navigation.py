@@ -8,6 +8,9 @@ from ipdb import set_trace
 
 gravity_n = np.array([0, 0, 9.81])
 
+def sksym(x):
+    return np.array([[0, -x[2], x[1]],[x[2], 0, -x[0]], [-x[1], x[0], 0]])
+
 default_imu_params = {
         'sigma_a' : 1e-2,
         'sigma_w' : 1e-2,
@@ -219,7 +222,7 @@ class NavigationSystem(object):
         pos_est = self.states[self.pos, idx]
         spec_force = self.states[self.acc, idx]
         z = self.gnss.generate_measurement(true_pos, true_angles)
-        est, _ = self.navfilter.step(z, quat_est, spec_force, pos_est)
+        est, cov = self.navfilter.step(z, quat_est, spec_force, pos_est)
         err_quat = np.hstack((0.5*est[:3], 1))
         err_vel = est[3:6]
         err_pos = est[6:9]
@@ -227,6 +230,9 @@ class NavigationSystem(object):
         self.states[self.vel, idx] += err_vel
         self.states[self.pos, idx] += err_pos
         self.strapdown.update_estimates(self.states[self.quat, idx], self.states[self.vel, idx], self.states[self.pos, idx])
+        G = np.identity(9)
+        G[:3, :3] += sksym(0.5*est[:3])
+        self.navfilter.cov_posterior = G.dot(cov).dot(G.T)
 
     def plot_position(self, ax):
         ax.plot(self.states[self.pos[1], :], self.states[self.pos[0], :])

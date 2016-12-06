@@ -2,6 +2,7 @@ import numpy as np
 from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
 from autopy.conversion import euler_angles_to_matrix
+from filtersim.navigation import gravity_n
 import matplotlib.pyplot as plt
 from ipdb import set_trace
 
@@ -190,20 +191,25 @@ class Ownship(object):
             ref = np.hstack((eta_ref, nu_ref))
             x_now = self.states[:, idx-1]
             self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)
-        if nav_sys is not None:
-            nav_sys.step(idx)
+            if self.nav_sys is not None:
+                acc, gyr = self.imu_states(idx)
+                gravity_b = euler_angles_to_matrix(self.states[self.eta, idx][self.ang]).T.dot(gravity_n)
+                spec_force = acc-gravity_b
+                pos, eul = self.gps_states(idx)
+                self.nav_sys.step(idx, spec_force, gyr, pos, eul)
 
     # Navigation
-    def measurement_imu(self, idx):
-        acc = self.states[self.tau, idx][self.pos]
+    def imu_states(self, idx):
+        def sksym(w):
+            return np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
         omega = self.states[self.nu, idx][self.ang]
-        return np.hstack((acc, omega))
+        acc = self.states[self.tau, idx][self.pos]+sksym(omega).dot(self.states[self.nu, idx][self.pos])
+        return acc, omega
 
-    def measurement_gps(self, idx):
+    def gps_states(self, idx):
         pos = self.states[self.eta, idx][self.pos]
-        vel = self.states[self.nu, idx][self.pos]
-        return np.hstack((pos, vel))
-    
+        eul = self.states[self.eta, idx][self.ang]
+        return pos, eul
     
     # Utilities
     def vel_to_NED(self):
@@ -225,6 +231,7 @@ class Ownship(object):
         vel_N = self.vel_to_NED()
         axes[0].plot(self.time, vel_N[0,:])
         axes[1].plot(self.time, vel_N[1,:])
+        axes[2].plot(self.time, vel_N[2,:])
 
     def plot_velocity_body(self, axes=None):
         if axes is None:
@@ -248,4 +255,7 @@ class Ownship(object):
             fig, axes = plt.subplots(ncols=2)
         plot_with_title(axes[0], self.time, np.rad2deg(self.states[5,:]), 'Yaw [deg]')
         plot_with_title(axes[1], self.time, np.rad2deg(self.states[11,:]), 'Yaw rate [deg/s]')
-        axes[1].plot(self.time, np.rad2deg(self.r_ref),'k')
+
+    def plot_angles(self, axes):
+        titles = ['Roll', 'Pitch', 'Yaw']
+        [plot_with_title(axes[i], self.time, np.rad2deg(self.states[3+i,:]), titles[i]) for i in range(3)]

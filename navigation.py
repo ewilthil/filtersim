@@ -128,7 +128,6 @@ class NavigationFilter(object):
         self.est_posterior = self.est_prior+K.dot(z-z_hat)
         self.cov_posterior = (np.identity(self.nx)-K.dot(H)).dot(self.cov_posterior)
         self.cov_posterior = 0.5*(self.cov_posterior+self.cov_posterior.T)
-        set_trace()
         return self.est_posterior, self.cov_posterior, z-z_hat
 
     def F_matrix(self, C, f):
@@ -258,7 +257,7 @@ class NavigationSystem(object):
         true_vel_err = true_vel-self.states[self.vel, idx]
         true_pos_err = true_pos-self.states[self.pos, idx]
         self.true_errors[:, gnss_idx] = np.hstack((true_ang_err, true_vel_err, true_pos_err))
-        self.cov_errors[:,:,gnss_idx] = cov
+        self.cov_errors[:,:,gnss_idx] = self.navfilter.cov_posterior
         self.innovations[:, gnss_idx] = innovation
 
     def plot_position(self, ax):

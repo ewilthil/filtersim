@@ -36,3 +36,9 @@ ownship.nav_sys.plot_velocity(vel_ax)
 pos_fig, pos_ax = plt.subplots()
 ownship.plot_position(pos_ax)
 ownship.nav_sys.plot_position(pos_ax)
+
+ownship.nav_sys.plot_errors()
+
+ownship.nav_sys.plot_innovations()
+
+plt.show()

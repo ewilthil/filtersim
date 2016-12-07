@@ -5,6 +5,7 @@ from scipy.stats import multivariate_normal
 from estimators import EKF_navigation
 from tf.transformations import euler_matrix, quaternion_from_euler
 from ipdb import set_trace
+from filtersim.shipmodels import van_loan_discretization
 
 gravity_n = np.array([0, 0, 9.81])
 
@@ -55,7 +56,7 @@ unbiased_imu = InertialMeasurementUnit(unbiased_imu_params)
 default_gnss_params = {
         'sigma_pos' : 2,
         'sigma_ang' : np.deg2rad(1),
-        'sigma_quat' : 0.05,
+        'sigma_quat' : 0.005,
         }
 
 class GnssCompass(object):
@@ -89,6 +90,7 @@ class StrapdownSystem(object):
         vel_old = self.vel
         self.vel = self.vel+self.dt*(np.dot(R, acc)+gravity_n)
         self.pos = self.pos+self.dt/2.*(vel_old+self.vel)
+        self.quat = self.quat/np.linalg.norm(self.quat)
         return self.quat, self.vel, self.pos
 
     def update_estimates(self, q, v, p):
@@ -104,7 +106,7 @@ class NavigationFilter(object):
         I3 = np.identity(3)
         ang_cov = np.deg2rad(1)**2*I3
         vel_cov = 0.5**2*I3
-        pos_cov = 5**2*I3
+        pos_cov = 2**2*I3
         self.est_posterior = np.zeros(self.nx)
         self.cov_posterior = block_diag(ang_cov, vel_cov, pos_cov)
         self.Q = self.Q_matrix()
@@ -112,10 +114,13 @@ class NavigationFilter(object):
 
     def step(self, z, quat_est, spec_force, pos_est):
         C = conv.quat_to_rot(quat_est)
-        F = self.F_matrix(C, spec_force)
-        Phi = np.identity(F.shape[0])+self.dt*F
+        Fc = self.F_matrix(C, spec_force)
+        Gc = self.G_matrix(C)
+        Q_current = Gc.dot(self.Q).dot(Gc.T)
+        #Phi = np.identity(F.shape[0])+self.dt*F
+        Fk, _, Qk = van_loan_discretization(self.dt, Fc, Q=Q_current)
         self.est_prior = np.zeros(self.nx)
-        self.cov_prior = Phi.dot(self.cov_posterior).dot(Phi.T)+self.Q
+        self.cov_prior = Fk.dot(self.cov_posterior).dot(Fk.T)+Qk
         H = self.H_matrix(quat_est)
         S = H.dot(self.cov_prior).dot(H.T)+self.R
         K = self.cov_prior.dot(H.T).dot(np.linalg.inv(S))
@@ -123,7 +128,8 @@ class NavigationFilter(object):
         self.est_posterior = self.est_prior+K.dot(z-z_hat)
         self.cov_posterior = (np.identity(self.nx)-K.dot(H)).dot(self.cov_posterior)
         self.cov_posterior = 0.5*(self.cov_posterior+self.cov_posterior.T)
-        return self.est_posterior, self.cov_posterior
+        set_trace()
+        return self.est_posterior, self.cov_posterior, z-z_hat
 
     def F_matrix(self, C, f):
         F_21 = -sksym(C.dot(f))
@@ -148,15 +154,21 @@ class NavigationFilter(object):
 
     def Q_matrix(self):
         I3 = np.identity(3)
-        Q = np.zeros((self.nx, self.nx))
+        Q = np.zeros((6, 6))
         Q[:3, :3] = default_imu_params['sigma_w']**2*I3
         Q[3:6, 3:6] = default_imu_params['sigma_a']**2*I3
-        Q[6:9, 6:9] = (1e-6)**2*I3
+        #Q[6:9, 6:9] = 0*(1e-8)**2*I3
         if self.nx > 9:
             Q[9:12, 9:12] = (1e-6)**2*I3
         if self.nx > 12:
             Q[12:15, 12:15] = (1e-6)**2*I3
         return Q
+
+    def G_matrix(self, C):
+        G = np.zeros((9, 6))
+        G[:3, 3:6] = C
+        G[3:6, :3] = C
+        return G
     
     def R_matrix(self):
         R = np.zeros((self.nz, self.nz))
@@ -176,14 +188,14 @@ class NavigationSystem(object):
     def __init__(self, base_time, dt_imu, dt_gnss, x0, imu=default_imu, gnss=default_gnss):
         self.base_time = base_time
         dt_base = base_time[1]-base_time[0]
-        M_imu = int(np.floor(dt_imu/dt_base))
-        M_gnss = int(np.floor(dt_gnss/dt_base))
+        self.M_imu = int(np.floor(dt_imu/dt_base))
+        self.M_gnss = int(np.floor(dt_gnss/dt_base))
         self.valid_imu = np.zeros_like(base_time, dtype=bool)
         self.valid_gnss = np.zeros_like(base_time, dtype=bool)
         for idx in range(len(base_time)):
-            if np.mod(idx, M_imu) == 0:
+            if np.mod(idx, self.M_imu) == 0:
                 self.valid_imu[idx] = True
-            if np.mod(idx, M_gnss) == 0:
+            if np.mod(idx, self.M_gnss) == 0:
                 self.valid_gnss[idx] = True
         self.states = np.zeros((22, len(base_time)))
         # x0 = [eta, nu, tau]. Biases = 0
@@ -199,15 +211,21 @@ class NavigationSystem(object):
         self.gnss = gnss
         self.strapdown = StrapdownSystem(quat_0, vel_0, pos_0, dt_imu)
         self.navfilter = NavigationFilter(dt_gnss)
+        self.gnss_time = base_time[self.valid_gnss]
+        N_gnss = len(self.gnss_time)
+        self.est_errors = np.zeros((self.navfilter.nx, N_gnss))
+        self.true_errors = np.zeros((self.navfilter.nx, N_gnss))
+        self.cov_errors = np.zeros((self.navfilter.nx, self.navfilter.nx, N_gnss))
+        self.innovations = np.zeros((self.navfilter.nz, N_gnss))
 
-    def step(self, idx, true_sf, true_gyr, true_pos, true_eul):
+    def step(self, idx, true_sf, true_gyr, true_pos, true_vel, true_eul):
         if idx > 0:
             if self.valid_imu[idx]:
                 self.states[:16, idx] = self.step_imu(true_sf, true_gyr)
             else:
                 self.states[:16, idx] = self.states[:16, idx-1]
             if self.valid_gnss[idx]:
-                delta_x = self.step_gnss(idx, true_pos, true_eul)
+                delta_x = self.step_gnss(idx, true_pos, true_vel, true_eul)
             else:
                 delta_x = np.zeros(15)
 
@@ -216,13 +234,13 @@ class NavigationSystem(object):
         att, vel, pos = self.strapdown.step(spec_force, gyr)
         return np.hstack((att, vel, pos, gyr, spec_force))
 
-    def step_gnss(self, idx, true_pos, true_angles):
+    def step_gnss(self, idx, true_pos, true_vel, true_angles):
         C = conv.quat_to_rot(self.states[self.quat, idx])
         quat_est = self.states[self.quat, idx]
         pos_est = self.states[self.pos, idx]
         spec_force = self.states[self.acc, idx]
         z = self.gnss.generate_measurement(true_pos, true_angles)
-        est, cov = self.navfilter.step(z, quat_est, spec_force, pos_est)
+        est, cov, innovation = self.navfilter.step(z, quat_est, spec_force, pos_est)
         err_quat = np.hstack((0.5*est[:3], 1))
         err_vel = est[3:6]
         err_pos = est[6:9]
@@ -233,6 +251,15 @@ class NavigationSystem(object):
         G = np.identity(9)
         G[:3, :3] += sksym(0.5*est[:3])
         self.navfilter.cov_posterior = G.dot(cov).dot(G.T)
+        gnss_idx = int(np.floor(idx/self.M_gnss))
+        self.est_errors[:, gnss_idx] = est
+        true_err_quat = conv.quat_mul(conv.euler_angles_to_quaternion(true_angles), conv.quat_conj(self.states[self.quat, idx]))
+        true_ang_err = 2*true_err_quat[:3]
+        true_vel_err = true_vel-self.states[self.vel, idx]
+        true_pos_err = true_pos-self.states[self.pos, idx]
+        self.true_errors[:, gnss_idx] = np.hstack((true_ang_err, true_vel_err, true_pos_err))
+        self.cov_errors[:,:,gnss_idx] = cov
+        self.innovations[:, gnss_idx] = innovation
 
     def plot_position(self, ax):
         ax.plot(self.states[self.pos[1], :], self.states[self.pos[0], :])
@@ -244,3 +271,41 @@ class NavigationSystem(object):
 
     def plot_velocity(self, axes):
         [axes[i].plot(self.base_time, self.states[self.vel[i], :]) for i in range(3)]
+
+    def plot_errors(self, axes=None):
+        if axes is None:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(ncols=3, nrows=3)
+        ang_axes=axes[0, :]
+        vel_axes=axes[1, :]
+        pos_axes=axes[2, :]
+        titles = ['Roll error', 'Pitch error', 'Yaw error']
+        for i in range(3):
+            ang_axes[i].plot(self.gnss_time, np.rad2deg(self.true_errors[i, :]), label='True error')
+            ang_axes[i].plot(self.gnss_time, np.rad2deg(self.est_errors[i, :]), label='Estimated error')
+            ang_axes[i].set_title(titles[i])
+            ang_axes[i].legend()
+        titles = ['North vel error', 'East vel error', 'Down vel error']
+        for i in range(3):
+            vel_axes[i].plot(self.gnss_time, self.true_errors[i+3, :], label='True error')
+            vel_axes[i].plot(self.gnss_time, self.est_errors[i+3, :], label='Estimated error')
+            vel_axes[i].set_title(titles[i])
+            vel_axes[i].legend()
+        titles = ['North pos error', 'East pos error', 'Down pos error']
+        for i in range(3):
+            pos_axes[i].plot(self.gnss_time, self.true_errors[i+6, :], label='True error')
+            pos_axes[i].plot(self.gnss_time, self.est_errors[i+6, :], label='Estimated error')
+            pos_axes[i].set_title(titles[i])
+            pos_axes[i].legend()
+
+    def plot_innovations(self, axes=None):
+        if axes is None:
+            import matplotlib.pyplot as plt
+            pos_fig, pos_axes = plt.subplots(nrows=3)
+            ang_fig, ang_axes = plt.subplots(nrows=4)
+
+        for i in range(3):
+            pos_axes[i].plot(self.gnss_time, self.innovations[i, :])
+        for i in range(4):
+            ang_axes[i].plot(self.gnss_time, self.innovations[i+3, :])
+

@@ -195,8 +195,8 @@ class Ownship(object):
                 acc, gyr = self.imu_states(idx)
                 gravity_b = euler_angles_to_matrix(self.states[self.eta, idx][self.ang]).T.dot(gravity_n)
                 spec_force = acc-gravity_b
-                pos, eul = self.gps_states(idx)
-                self.nav_sys.step(idx, spec_force, gyr, pos, eul)
+                pos, vel, eul = self.gps_states(idx)
+                self.nav_sys.step(idx, spec_force, gyr, pos, vel, eul)
 
     # Navigation
     def imu_states(self, idx):
@@ -209,7 +209,9 @@ class Ownship(object):
     def gps_states(self, idx):
         pos = self.states[self.eta, idx][self.pos]
         eul = self.states[self.eta, idx][self.ang]
-        return pos, eul
+        vel_B = self.states[self.nu, idx][self.pos]
+        vel_N = euler_angles_to_matrix(eul).dot(vel_B)
+        return pos, vel_N, eul
     
     # Utilities
     def vel_to_NED(self):

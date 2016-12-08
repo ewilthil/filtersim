@@ -191,12 +191,12 @@ class Ownship(object):
             ref = np.hstack((eta_ref, nu_ref))
             x_now = self.states[:, idx-1]
             self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)
-            if self.nav_sys is not None:
-                acc, gyr = self.imu_states(idx)
-                gravity_b = euler_angles_to_matrix(self.states[self.eta, idx][self.ang]).T.dot(gravity_n)
-                spec_force = acc-gravity_b
-                pos, vel, eul = self.gps_states(idx)
-                self.nav_sys.step(idx, spec_force, gyr, pos, vel, eul)
+        if self.nav_sys is not None:
+            acc, gyr = self.imu_states(idx)
+            gravity_b = euler_angles_to_matrix(self.states[self.eta, idx][self.ang]).T.dot(gravity_n)
+            spec_force = acc-gravity_b
+            pos, vel, eul = self.gps_states(idx)
+            self.nav_sys.step(idx, spec_force, gyr, pos, vel, eul)
 
     # Navigation
     def imu_states(self, idx):

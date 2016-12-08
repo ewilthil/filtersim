@@ -14,7 +14,7 @@ def sksym(x):
 
 default_imu_params = {
         'sigma_a' : 1e-2,
-        'sigma_w' : 1e-2,
+        'sigma_w' : np.deg2rad(0.2),
         'b_a_max' : 1e-2,
         'b_w_max' : 1e-2,
         'b_a' : None,
@@ -23,7 +23,7 @@ default_imu_params = {
 
 unbiased_imu_params = {
         'sigma_a' : 1e-2,
-        'sigma_w' : 1e-2,
+        'sigma_w' : np.deg2rad(0.2),
         'b_a_max' : 1e-2,
         'b_w_max' : 1e-2,
         'b_a' : 0,
@@ -122,11 +122,12 @@ class NavigationFilter(object):
         self.est_prior = np.zeros(self.nx)
         self.cov_prior = Fk.dot(self.cov_posterior).dot(Fk.T)+Qk
         H = self.H_matrix(quat_est)
-        S = H.dot(self.cov_prior).dot(H.T)+self.R
-        K = self.cov_prior.dot(H.T).dot(np.linalg.inv(S))
+        self.S = H.dot(self.cov_prior).dot(H.T)+self.R
+        self.K = self.cov_prior.dot(H.T).dot(np.linalg.inv(self.S))
+        #set_trace()
         z_hat = np.hstack((pos_est, quat_est))
-        self.est_posterior = self.est_prior+K.dot(z-z_hat)
-        self.cov_posterior = (np.identity(self.nx)-K.dot(H)).dot(self.cov_posterior)
+        self.est_posterior = self.est_prior+self.K.dot(z-z_hat)
+        self.cov_posterior = (np.identity(self.nx)-self.K.dot(H)).dot(self.cov_prior)
         self.cov_posterior = 0.5*(self.cov_posterior+self.cov_posterior.T)
         return self.est_posterior, self.cov_posterior, z-z_hat
 
@@ -154,8 +155,8 @@ class NavigationFilter(object):
     def Q_matrix(self):
         I3 = np.identity(3)
         Q = np.zeros((6, 6))
-        Q[:3, :3] = default_imu_params['sigma_w']**2*I3
-        Q[3:6, 3:6] = default_imu_params['sigma_a']**2*I3
+        Q[:3, :3] = default_imu_params['sigma_a']**2*I3
+        Q[3:6, 3:6] = default_imu_params['sigma_w']**2*I3
         #Q[6:9, 6:9] = 0*(1e-8)**2*I3
         if self.nx > 9:
             Q[9:12, 9:12] = (1e-6)**2*I3
@@ -216,6 +217,10 @@ class NavigationSystem(object):
         self.true_errors = np.zeros((self.navfilter.nx, N_gnss))
         self.cov_errors = np.zeros((self.navfilter.nx, self.navfilter.nx, N_gnss))
         self.innovations = np.zeros((self.navfilter.nz, N_gnss))
+        self.pos_gain = np.zeros((3, N_gnss))
+        self.inn_cov = np.zeros((3, N_gnss))
+        self.cov_priors = np.zeros((9, N_gnss))
+        self.cov_posteriors = np.zeros((9, 9, N_gnss))
 
     def step(self, idx, true_sf, true_gyr, true_pos, true_vel, true_eul):
         if idx > 0:
@@ -223,10 +228,10 @@ class NavigationSystem(object):
                 self.states[:16, idx] = self.step_imu(true_sf, true_gyr)
             else:
                 self.states[:16, idx] = self.states[:16, idx-1]
-            if self.valid_gnss[idx]:
-                delta_x = self.step_gnss(idx, true_pos, true_vel, true_eul)
-            else:
-                delta_x = np.zeros(15)
+        if self.valid_gnss[idx]:
+            delta_x = self.step_gnss(idx, true_pos, true_vel, true_eul)
+        else:
+            delta_x = np.zeros(15)
 
     def step_imu(self, true_sf, true_gyr):
         spec_force, gyr = self.imu.generate_measurement(true_sf, true_gyr)
@@ -241,6 +246,7 @@ class NavigationSystem(object):
         z = self.gnss.generate_measurement(true_pos, true_angles)
         est, cov, innovation = self.navfilter.step(z, quat_est, spec_force, pos_est)
         err_quat = np.hstack((0.5*est[:3], 1))
+        err_quat = err_quat/np.linalg.norm(err_quat)
         err_vel = est[3:6]
         err_pos = est[6:9]
         self.states[self.quat, idx] = conv.quat_mul(err_quat, quat_est)
@@ -259,6 +265,21 @@ class NavigationSystem(object):
         self.true_errors[:, gnss_idx] = np.hstack((true_ang_err, true_vel_err, true_pos_err))
         self.cov_errors[:,:,gnss_idx] = self.navfilter.cov_posterior
         self.innovations[:, gnss_idx] = innovation
+        self.pos_gain[:, gnss_idx] = np.diag(self.navfilter.K[6:9, :3])
+        self.inn_cov[:,gnss_idx] = np.diag(self.navfilter.S[:3, :3])
+        self.cov_priors[:, gnss_idx] = np.diag(self.navfilter.cov_prior)
+        self.cov_posteriors[:, :, gnss_idx] = self.navfilter.cov_posterior
+
+    def get_nees(self):
+        nees = np.zeros(len(self.gnss_time))
+        for idx in range(len(self.gnss_time)):
+            innov = self.true_errors[:,idx]-self.est_errors[:,idx]
+            cov = self.cov_posteriors[:,:, idx]
+            innov = innov[np.newaxis]
+            nees[idx] =np.squeeze(innov.dot(np.linalg.inv(cov)).dot(innov.T))
+        return nees
+
+
 
     def plot_position(self, ax):
         ax.plot(self.states[self.pos[1], :], self.states[self.pos[0], :])
@@ -278,22 +299,24 @@ class NavigationSystem(object):
         ang_axes=axes[0, :]
         vel_axes=axes[1, :]
         pos_axes=axes[2, :]
+        N_err = 20
+        covs = np.array([np.diag(self.cov_posteriors[:,:,i]) for i in range(self.cov_posteriors.shape[2])]).T
         titles = ['Roll error', 'Pitch error', 'Yaw error']
         for i in range(3):
-            ang_axes[i].plot(self.gnss_time, np.rad2deg(self.true_errors[i, :]), label='True error')
-            ang_axes[i].plot(self.gnss_time, np.rad2deg(self.est_errors[i, :]), label='Estimated error')
+            ang_axes[i].plot(self.gnss_time, np.rad2deg(self.true_errors[i, :]), label='True')
+            ang_axes[i].errorbar(self.gnss_time, np.rad2deg(self.est_errors[i, :]), yerr=3*np.rad2deg(np.sqrt(covs[i, :])), label='Estimate', errorevery=N_err)
             ang_axes[i].set_title(titles[i])
             ang_axes[i].legend()
         titles = ['North vel error', 'East vel error', 'Down vel error']
         for i in range(3):
             vel_axes[i].plot(self.gnss_time, self.true_errors[i+3, :], label='True error')
-            vel_axes[i].plot(self.gnss_time, self.est_errors[i+3, :], label='Estimated error')
+            vel_axes[i].errorbar(self.gnss_time, self.est_errors[i+3, :], yerr=3*np.sqrt(covs[i+3, :]), label='Estimate', errorevery=N_err)
             vel_axes[i].set_title(titles[i])
             vel_axes[i].legend()
         titles = ['North pos error', 'East pos error', 'Down pos error']
         for i in range(3):
             pos_axes[i].plot(self.gnss_time, self.true_errors[i+6, :], label='True error')
-            pos_axes[i].plot(self.gnss_time, self.est_errors[i+6, :], label='Estimated error')
+            pos_axes[i].errorbar(self.gnss_time, self.est_errors[i+6, :], yerr=3*np.sqrt(covs[i+6, :]), label='Estimate', errorevery=N_err)
             pos_axes[i].set_title(titles[i])
             pos_axes[i].legend()
 
@@ -302,9 +325,23 @@ class NavigationSystem(object):
             import matplotlib.pyplot as plt
             pos_fig, pos_axes = plt.subplots(nrows=3)
             ang_fig, ang_axes = plt.subplots(nrows=4)
+            gain_fig, gain_ax = plt.subplots(nrows=3)
+            inn_fig, inn_ax = plt.subplots(nrows=3)
+            cov_fig, cov_ax = plt.subplots(nrows=3)
 
+        covs = np.array([np.diag(self.cov_posteriors[:,:,i]) for i in range(self.cov_posteriors.shape[2])]).T
         for i in range(3):
             pos_axes[i].plot(self.gnss_time, self.innovations[i, :])
         for i in range(4):
             ang_axes[i].plot(self.gnss_time, self.innovations[i+3, :])
 
+        for i in range(3):
+            gain_ax[i].plot(self.gnss_time, self.pos_gain[i, :])
+
+        for i in range(3):
+            inn_ax[i].plot(self.gnss_time, self.inn_cov[i, :])
+
+        for i  in range(3):
+            cov_ax[i].plot(self.gnss_time, self.cov_priors[6+i, :], label='prior')
+            cov_ax[i].plot(self.gnss_time, covs[6+i, :], label='posterior')
+            cov_ax[i].legend()

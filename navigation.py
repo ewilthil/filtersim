@@ -272,12 +272,23 @@ class NavigationSystem(object):
 
     def get_nees(self):
         nees = np.zeros(len(self.gnss_time))
+        ang_nees = np.zeros(len(self.gnss_time))
+        vel_nees = np.zeros(len(self.gnss_time))
+        pos_nees = np.zeros(len(self.gnss_time))
         for idx in range(len(self.gnss_time)):
             innov = self.true_errors[:,idx]-self.est_errors[:,idx]
+            ang_innov = innov[:3]
+            vel_innov = innov[3:6]
+            pos_innov = innov[6:9]
             cov = self.cov_posteriors[:,:, idx]
-            innov = innov[np.newaxis]
-            nees[idx] =np.squeeze(innov.dot(np.linalg.inv(cov)).dot(innov.T))
-        return nees
+            ang_cov = cov[:3, :3]
+            vel_cov = cov[3:6, 3:6]
+            pos_cov = cov[6:9, 6:9]
+            nees[idx] =innov.dot(np.linalg.inv(cov)).dot(innov)
+            ang_nees[idx] = ang_innov.dot(np.linalg.inv(ang_cov)).dot(ang_innov)
+            vel_nees[idx] = vel_innov.dot(np.linalg.inv(vel_cov)).dot(vel_innov)
+            pos_nees[idx] = pos_innov.dot(np.linalg.inv(pos_cov)).dot(pos_innov)
+        return nees, ang_nees, vel_nees, pos_nees
 
 
 

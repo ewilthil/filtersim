@@ -5,37 +5,7 @@ from autopy.conversion import euler_angles_to_matrix
 from filtersim.navigation import gravity_n
 import matplotlib.pyplot as plt
 from ipdb import set_trace
-
-def van_loan_discretization(dt, A, B=None, Q=None):
-    n = A.shape[0]
-    def get_input_mapping(A, B):
-        if len(B.shape) == 1:
-            B = B[np.newaxis].T
-        m = B.shape[1]
-        F_row_1 = np.hstack((A, B))
-        F_row_2 = np.hstack((np.zeros((m,n)), np.zeros((m,m))))
-        F = np.vstack((F_row_1, F_row_2))
-        Fd = expm(F*dt)
-        Ad = Fd[:n, :n]
-        Bd = Fd[:n, n:]
-        return Ad, Bd
-    def get_noise_mapping(A, Q):
-        F_row_1 = np.hstack((-A, Q))
-        F_row_2 = np.hstack((np.zeros((n, n)), A.T))
-        F = np.vstack((F_row_1, F_row_2))
-        Fd = expm(F*dt)
-        Ad = Fd[n:, n:].T
-        Qd = Ad.dot(Fd[:n, n:])
-        return Ad, Qd
-    if B is not None:
-        Ad, Bd = get_input_mapping(A, B)
-    else:
-        Bd = None
-    if Q is not None:
-        Ad, Qd = get_noise_mapping(A, Q)
-    else:
-        Qd = None
-    return Ad, Bd, Qd
+from filtersim.common_math import van_loan_discretization, sksym
 
 def plot_with_title(ax, x, y, title):
     ax.plot(x, y)
@@ -175,14 +145,15 @@ class Ownship(object):
     tau = range(12, 18)
     pos = range(3)
     ang = range(3, 6)
-    def __init__(self, time, model, x0, nav_sys=None):
+    def __init__(self, time, model, x0, imu=None, gnss=None):
         self.time = time
         self.dt = time[1]-time[0]
         self.states = np.zeros((len(x0), len(time)))
         self.states[:,0] = x0
         self.model = model
         self.noise = multivariate_normal(np.zeros(model.Qd.shape[0]), model.Qd).rvs(size=len(time)).T
-        self.nav_sys = nav_sys
+        self.imu = imu
+        self.gnss = gnss
 
     def step(self, idx, u_ref, psi_ref):
         if idx > 0:
@@ -191,20 +162,20 @@ class Ownship(object):
             ref = np.hstack((eta_ref, nu_ref))
             x_now = self.states[:, idx-1]
             self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)
-        if self.nav_sys is not None:
-            acc, gyr = self.imu_states(idx)
-            gravity_b = euler_angles_to_matrix(self.states[self.eta, idx][self.ang]).T.dot(gravity_n)
-            spec_force = acc-gravity_b
-            pos, vel, eul = self.gps_states(idx)
-            self.nav_sys.step(idx, spec_force, gyr, pos, vel, eul)
 
     # Navigation
+    def get_imu_measurement(self, idx):
+        omega = self.stateps[self.nu, idx][self.ang]
+
     def imu_states(self, idx):
-        def sksym(w):
-            return np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
-        omega = self.states[self.nu, idx][self.ang]
-        acc = self.states[self.tau, idx][self.pos]+sksym(omega).dot(self.states[self.nu, idx][self.pos])
-        return acc, omega
+        ang_rate = self.states[self.nu, idx][self.ang]
+        acc = self.states[self.tau, idx][self.pos]+sksym(ang_rate).dot(self.states[self.nu, idx][self.pos])
+        euler = self.states[self.eta, idx][self.ang]
+        DCM_to_b = euler_angles_to_matrix(euler).T
+        spec_force = acc-DCM_to_b.dot(gravity_n)
+        if self.imu is not None:
+            spec_force, ang_rate = self.imu.generate_measurement(spec_force, ang_rate)
+        return spec_force, ang_rate
 
     def gps_states(self, idx):
         pos = self.states[self.eta, idx][self.pos]
@@ -224,10 +195,15 @@ class Ownship(object):
 
 
     # Plot functions
-    def plot_position(self, ax):
-        ax.plot(self.states[1,:], self.states[0,:])
-        ax.plot(self.states[1,0], self.states[0,0], 'ko')
+    def plot_position(self, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+        line = ax.plot(self.states[1,:], self.states[0,:])
+        ax.plot(self.states[1,0], self.states[0,0], color=line[0].get_color())
         ax.set_aspect('equal')
+        return fig, ax
 
     def plot_velocity(self, axes):
         vel_N = self.vel_to_NED()

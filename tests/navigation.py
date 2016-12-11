@@ -10,9 +10,9 @@ model = shipmodels.NonlinearStochasticModel()
 # Set up navigation system
 dt_imu = dt
 dt_gps = 20*dt
-nav_sys = navigation.NavigationSystem(time, dt_imu, dt_gps, x0, imu=navigation.unbiased_imu)
+nav_sys = navigation.NavigationSystem(time, x0)
 # Set up ownship
-ownship = shipmodels.Ownship(time, model, x0, nav_sys=nav_sys)
+ownship = shipmodels.Ownship(time, model, x0)
 def heading_ref(t):
     if t < 150:
         return 0
@@ -24,21 +24,9 @@ def surge_ref(t):
     return 10
 for t_idx, t in enumerate(time):
     ownship.step(t_idx, surge_ref(t), heading_ref(t))
+    spec_force, ang_rate = ownship.imu_states(t_idx)
+    nav_sys.step_strapdown(t_idx, spec_force, ang_rate)
 
-ang_fig, ang_ax = plt.subplots(ncols=3)
-ownship.plot_angles(ang_ax)
-ownship.nav_sys.plot_angles(ang_ax)
-
-vel_fig, vel_ax = plt.subplots(ncols=3)
-ownship.plot_velocity(vel_ax)
-ownship.nav_sys.plot_velocity(vel_ax)
-
-pos_fig, pos_ax = plt.subplots()
-ownship.plot_position(pos_ax)
-ownship.nav_sys.plot_position(pos_ax)
-
-ownship.nav_sys.plot_errors()
-
-ownship.nav_sys.plot_innovations()
-
+_, ax = ownship.plot_position()
+nav_sys.plot_position(ax)
 plt.show()

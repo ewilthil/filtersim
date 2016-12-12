@@ -164,8 +164,6 @@ class Ownship(object):
             self.states[:,idx] = self.model.step(x_now, ref, self.noise[:,idx], self.dt)
 
     # Navigation
-    def get_imu_measurement(self, idx):
-        omega = self.stateps[self.nu, idx][self.ang]
 
     def imu_states(self, idx):
         ang_rate = self.states[self.nu, idx][self.ang]
@@ -177,12 +175,12 @@ class Ownship(object):
             spec_force, ang_rate = self.imu.generate_measurement(spec_force, ang_rate)
         return spec_force, ang_rate
 
-    def gps_states(self, idx):
+    def gnss_states(self, idx):
         pos = self.states[self.eta, idx][self.pos]
         eul = self.states[self.eta, idx][self.ang]
-        vel_B = self.states[self.nu, idx][self.pos]
-        vel_N = euler_angles_to_matrix(eul).dot(vel_B)
-        return pos, vel_N, eul
+        if self.gnss is not None:
+            pos, eul = self.gnss.generate_measurement(pos, eul)
+        return np.hstack((pos, eul))
     
     # Utilities
     def vel_to_NED(self):
@@ -205,11 +203,16 @@ class Ownship(object):
         ax.set_aspect('equal')
         return fig, ax
 
-    def plot_velocity(self, axes):
+    def plot_velocity(self, axes=None):
+        if axes is None:
+            fig, axes = plt.subplots(nrows=3)
+        else:
+            fig = axes[0].get_figure()
         vel_N = self.vel_to_NED()
         axes[0].plot(self.time, vel_N[0,:])
         axes[1].plot(self.time, vel_N[1,:])
         axes[2].plot(self.time, vel_N[2,:])
+        return fig, axes
 
     def plot_velocity_body(self, axes=None):
         if axes is None:

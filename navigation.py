@@ -65,88 +65,11 @@ class GnssCompass(object):
         quat = conv.euler_angles_to_quaternion(eul)
         pos_noise = np.random.normal(scale=self.sigma_pos, size=3)
         quat_noise = np.random.normal(scale=self.sigma_quat, size=4)
-        return np.hstack((pos+pos_noise, quat+quat_noise))
+        return pos+pos_noise, quat+quat_noise
 
 default_gnss = GnssCompass()
 
-class NavigationFilter(object):
-    def __init__(self, dt):
-        self.dt = dt
-        self.nx = 9
-        self.nz = 7
-        I3 = np.identity(3)
-        ang_cov = np.deg2rad(1)**2*I3
-        vel_cov = 0.5**2*I3
-        pos_cov = 2**2*I3
-        self.est_posterior = np.zeros(self.nx)
-        self.cov_posterior = block_diag(ang_cov, vel_cov, pos_cov)
-        self.Q = self.Q_matrix()
-        self.R = self.R_matrix()
-
-    def step(self, z, quat_est, spec_force, pos_est):
-        C = conv.quat_to_rot(quat_est)
-        Fc = self.F_matrix(C, spec_force)
-        Gc = self.G_matrix(C)
-        Q_current = Gc.dot(self.Q).dot(Gc.T)
-        #Phi = np.identity(F.shape[0])+self.dt*F
-        Fk, _, Qk = van_loan_discretization(self.dt, Fc, Q=Q_current)
-        self.est_prior = np.zeros(self.nx)
-        self.cov_prior = Fk.dot(self.cov_posterior).dot(Fk.T)+Qk
-        H = self.H_matrix(quat_est)
-        self.S = H.dot(self.cov_prior).dot(H.T)+self.R
-        self.K = self.cov_prior.dot(H.T).dot(np.linalg.inv(self.S))
-        z_hat = np.hstack((pos_est, quat_est))
-        self.est_posterior = self.est_prior+self.K.dot(z-z_hat)
-        self.cov_posterior = (np.identity(self.nx)-self.K.dot(H)).dot(self.cov_prior)
-        self.cov_posterior = 0.5*(self.cov_posterior+self.cov_posterior.T)
-        return self.est_posterior, self.cov_posterior, z-z_hat
-
-    def F_matrix(self, C, f):
-        F_21 = -sksym(C.dot(f))
-        F = np.zeros((self.nx, self.nx))
-        F[3:6,:3] = F_21
-        F[6:9, 3:6] = np.identity(3)
-        return F
-
-    def H_matrix(self, quat_est):
-        H_pos = np.identity(3)
-        qv = quat_est[:3]
-        qs = quat_est[3]
-        H_quat_err_r1 = np.hstack((qs*np.identity(3)-sksym(qv), qv[np.newaxis].T))
-        H_quat_err_r2 = np.hstack((-qv.T, qs))
-        H_quat_err = np.vstack((H_quat_err_r1, H_quat_err_r2))
-        H_ang_err = np.vstack((0.5*np.identity(3), np.zeros((1,3))))
-        H_quat = H_quat_err.dot(H_ang_err)
-        H_total_pos = np.hstack((np.zeros((3,3)), np.zeros((3,3)), H_pos))
-        H_total_quat = np.hstack((H_quat, np.zeros((4, 3)), np.zeros((4, 3))))
-        H = np.vstack((H_total_pos, H_total_quat))
-        return H
-
-    def Q_matrix(self):
-        I3 = np.identity(3)
-        Q = np.zeros((6, 6))
-        Q[:3, :3] = default_imu_params['sigma_a']**2*I3
-        Q[3:6, 3:6] = default_imu_params['sigma_w']**2*I3
-        #Q[6:9, 6:9] = 0*(1e-8)**2*I3
-        if self.nx > 9:
-            Q[9:12, 9:12] = (1e-6)**2*I3
-        if self.nx > 12:
-            Q[12:15, 12:15] = (1e-6)**2*I3
-        return Q
-
-    def G_matrix(self, C):
-        G = np.zeros((9, 6))
-        G[:3, 3:6] = C
-        G[3:6, :3] = C
-        return G
-    
-    def R_matrix(self):
-        R = np.zeros((self.nz, self.nz))
-        R[:3, :3] = default_gnss_params['sigma_pos']**2*np.identity(3)
-        R[3:, 3:] = default_gnss_params['sigma_quat']**2*np.identity(4)
-        return R
-
-class NavigationSystem(object):
+class StrapdownSystem(object):
     quat = range(4)
     vel = range(4, 7)
     pos = range(7, 10)
@@ -179,7 +102,7 @@ class NavigationSystem(object):
         self.acc_bias += acc_bias_increment
         self.gyr_bias += gyr_bias_increment
 
-    def step_strapdown(self, idx, spec_force, ang_rate):
+    def step(self, idx, spec_force, ang_rate):
         spec_force, ang_rate = self.correct_bias(spec_force, ang_rate)
         if idx > 0:
             old_quat = self.states[self.quat, idx-1]
@@ -203,15 +126,16 @@ class NavigationSystem(object):
             self.states[self.vel, idx] = new_vel
             self.states[self.pos, idx] = new_pos
 
-    def update_states(self, idx, delta_ang, delta_vel, delta_pos):
+    def update_strapdown(self, idx, delta_ang, delta_vel, delta_pos):
         delta_quat = np.hstack((0.5*delta_ang, 1))
         delta_quat = delta_quat/np.linalg.norm(delta_quat)
-        self.states[self.quat, idx] = conv.quat_mul(err_quat, quat_est)
-        self.states[self.vel, idx] += err_vel
-        self.states[self.pos, idx] += err_pos
+        self.states[self.quat, idx] = conv.quat_mul(delta_quat, self.states[self.quat, idx])
+        self.states[self.vel, idx] += delta_vel
+        self.states[self.pos, idx] += delta_pos
 
     def get_states(self, idx):
-        return self.states[self.quat, idx], self.states[self.vel, idx], self.states[self.pos, idx], self.states[self.omega, idx], self.states[self.spec_force, idx]
+        return self.states[:, idx]
+        #return self.states[self.quat, idx], self.states[self.vel, idx], self.states[self.pos, idx], self.states[self.omega, idx], self.states[self.spec_force, idx]
 
     def correct_bias(self, spec_force, ang_rate):
         spec_force -= self.acc_bias
@@ -227,3 +151,105 @@ class NavigationSystem(object):
         ax.plot(self.states[self.pos[1], :], self.states[self.pos[0], :], color= line[0].get_color())
         ax.set_aspect('equal')
         return fig, ax
+
+    def plot_velocity(self, axes=None):
+        if axes is None:
+            fig, axes = plt.subplots(nrows=3)
+        else:
+            fig = axes[0].get_figure()
+        [axes[i].plot(self.time, self.states[self.vel[i], :]) for i in range(3)]
+        return fig, axes
+
+class NavigationFilter(object):
+    def __init__(self, time, imu_params=None, gnss_params=None):
+        self.time = time
+        self.states = np.zeros((9, len(time)))
+        self.dt = time[1]-time[0]
+        I3 = np.identity(3)
+        ang_cov = np.deg2rad(1)**2*I3
+        vel_cov = 0.5**2*I3
+        pos_cov = 2**2*I3
+        self.nx = 9
+        self.nz = 7
+        self.estimates = np.zeros((self.nx, len(time)))
+        self.covariances = np.zeros((self.nx, self.nx, len(time)))
+        self.est_posterior = np.zeros(self.nx)
+        self.cov_posterior = block_diag(ang_cov, vel_cov, pos_cov)
+        self.Q = self.Q_matrix(imu_params)
+        self.R = self.R_matrix(gnss_params)
+
+    def step(self, idx, z, u):
+        quat_est = u[:4]
+        pos_est = u[7:10]
+        spec_force = u[13:16]
+        C = conv.quat_to_rot(quat_est)
+        Fc = self.F_matrix(C, spec_force)
+        Gc = self.G_matrix(C)
+        Q_current = Gc.dot(self.Q).dot(Gc.T)
+        Fk, _, Qk = van_loan_discretization(self.dt, Fc, Q=Q_current)
+        Hk = self.H_matrix(quat_est)
+        if idx == 0:
+            cov_prior = self.cov_posterior
+        else:
+            cov_prior = Fk.dot(self.cov_posterior).dot(Fk.T)+Qk
+        S = Hk.dot(cov_prior).dot(Hk.T)+self.R
+        K = cov_prior.dot(Hk.T).dot(np.linalg.inv(S))
+        z_hat = np.hstack((pos_est, quat_est))
+        self.estimates[:,idx] = K.dot(z-z_hat)
+        self.cov_posterior = (np.identity(self.nx)-K.dot(Hk)).dot(cov_prior)
+        self.cov_posterior = 0.5*(self.cov_posterior+self.cov_posterior.T)
+        delta_states = self.estimates[:,idx]
+        self.covariances[:,:,idx] = self.cov_posterior
+        trans_mat = np.identity(self.nx)
+        trans_mat[:3, :3] += sksym(delta_states[:3])
+        self.cov_posterior = trans_mat.dot(self.cov_posterior).dot(trans_mat.T)
+        return delta_states[:3], delta_states[3:6], delta_states[6:9]
+
+    def F_matrix(self, C, f):
+        F_21 = -sksym(C.dot(f))
+        F = np.zeros((self.nx, self.nx))
+        F[3:6,:3] = F_21
+        F[6:9, 3:6] = np.identity(3)
+        return F
+
+    def H_matrix(self, quat_est):
+        H_pos = np.identity(3)
+        qv = quat_est[:3]
+        qs = quat_est[3]
+        H_quat_err_r1 = np.hstack((qs*np.identity(3)-sksym(qv), qv[np.newaxis].T))
+        H_quat_err_r2 = np.hstack((-qv.T, qs))
+        H_quat_err = np.vstack((H_quat_err_r1, H_quat_err_r2))
+        H_ang_err = np.vstack((0.5*np.identity(3), np.zeros((1,3))))
+        H_quat = H_quat_err.dot(H_ang_err)
+        H_total_pos = np.hstack((np.zeros((3,3)), np.zeros((3,3)), H_pos))
+        H_total_quat = np.hstack((H_quat, np.zeros((4, 3)), np.zeros((4, 3))))
+        H = np.vstack((H_total_pos, H_total_quat))
+        return H
+
+    def Q_matrix(self, params):
+        if params is None:
+            params = default_imu_params
+        I3 = np.identity(3)
+        Q = np.zeros((6, 6))
+        Q[:3, :3] = params['sigma_a']**2*I3
+        Q[3:6, 3:6] = params['sigma_w']**2*I3
+        #Q[6:9, 6:9] = 0*(1e-8)**2*I3
+        if self.nx > 9:
+            Q[9:12, 9:12] = (1e-6)**2*I3
+        if self.nx > 12:
+            Q[12:15, 12:15] = (1e-6)**2*I3
+        return Q
+
+    def G_matrix(self, C):
+        G = np.zeros((9, 6))
+        G[:3, 3:6] = C
+        G[3:6, :3] = C
+        return G
+
+    def R_matrix(self, params):
+        if params is None:
+            params = default_gnss_params
+        R = np.zeros((self.nz, self.nz))
+        R[:3, :3] = params['sigma_pos']**2*np.identity(3)
+        R[3:, 3:] = params['sigma_quat']**2*np.identity(4)
+        return R

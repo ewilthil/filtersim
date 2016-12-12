@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.linalg import expm
 
 def van_loan_discretization(dt, A, B=None, Q=None):
     n = A.shape[0]

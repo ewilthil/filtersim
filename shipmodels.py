@@ -91,6 +91,9 @@ class TargetShip(object):
         if idx > 0:
             x_now = self.states[:, idx-1]
             self.states[:,idx] = self.model.step(x_now, v_ref, self.noise[:,idx])
+    
+    def cartesian_position_measurement(self, idx):
+        return np.array([self.states[0, idx], self.states[2, idx]])
 
     def plot_position(self, ax):
         ax.plot(self.states[2,:], self.states[0,:])

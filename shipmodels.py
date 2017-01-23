@@ -14,15 +14,13 @@ def plot_with_title(ax, x, y, title):
 class LinearStochasticModel(object):
     def __init__(self, dt, n_dim, parameters=dict()):
         parameters = self.set_parameters(n_dim, parameters)
-        Ad = [None for _ in range(n_dim)]
-        Bd = [None for _ in range(n_dim)]
-        Qd = [None for _ in range(n_dim)]
+        self.n_dim = n_dim
+        self.A = [None for _ in range(n_dim)]
+        self.B = [None for _ in range(n_dim)]
+        self.Q = [None for _ in range(n_dim)]
         for i in range(n_dim):
-            A, B, Q = self.matrices_1D(parameters, i)
-            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, A, B, Q)
-        self.Ad = block_diag(*Ad)
-        self.Bd = block_diag(*Bd)
-        self.Qd = block_diag(*Qd)
+            self.A[i], self.B[i], self.Q[i] = self.matrices_1D(parameters, i)
+        self.Ad, self.Bd, self.Qd = self.discretize_system(dt)
 
     def step(self, x, u, v):
         return self.Ad.dot(x)+self.Bd.dot(u)+v
@@ -33,6 +31,17 @@ class LinearStochasticModel(object):
             if param_name in params.keys():
                 new_params[param_name] = params[param_name]
         return new_params
+
+    def discretize_system(self, dt):
+        Ad = [None for _ in range(self.n_dim)]
+        Bd = [None for _ in range(self.n_dim)]
+        Qd = [None for _ in range(self.n_dim)]
+        for i in range(self.n_dim):
+            Ad[i], Bd[i], Qd[i] = van_loan_discretization(dt, self.A[i], self.B[i], self.Q[i])
+        Ad = block_diag(*Ad)
+        Bd = block_diag(*Bd)
+        Qd = block_diag(*Qd)
+        return Ad, Bd, Qd
 
 class IntegratedOU(LinearStochasticModel):
     def default_parameters(self, n):

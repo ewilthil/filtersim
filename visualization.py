@@ -4,7 +4,7 @@ from matplotlib.cm import get_cmap
 from matplotlib.widgets import Slider
 import ipdb
 
-def plot_with_gradient(time, measurements, ax=None, cmap=get_cmap('Greens')):
+def plot_with_gradient(time, measurements_all, ax=None, cmap=get_cmap('Greens')):
     # measurements is assumed to be a list of list of measurements. The outer list is the same length as the time vector
     if ax is None:
         fig, ax = plt.subplots()
@@ -13,7 +13,7 @@ def plot_with_gradient(time, measurements, ax=None, cmap=get_cmap('Greens')):
     interval = (time-time[0])/(1.*time[-1]-time[0])
     for index, timestamp in enumerate(time):
         color = cmap(interval[index])
-        [ax.plot(z[1], z[0], 'o', color=color) for z in z_list[index]]
+        [ax.plot(z.value[1], z.value[0], 'o', color=color) for z in measurements_all[index]]
     return fig, ax
 
 def plot_trajectories_from_estimates(est_list, pos_ax=None):

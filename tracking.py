@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.stats import multivariate_normal, chi2
 from scipy.linalg import block_diag
+from ipdb import set_trace
 
 H = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
 
@@ -29,17 +30,21 @@ class MeasurementModel(object):
 
     def generate_measurements(self, true_targets, timestamp):
         N_targets = len(true_targets)
+        true_measurements = [np.array([traj[0], traj[2]]) for traj in true_targets]
         target_measurements = []
-        for target in true_targets:
+        for target in true_measurements:
             detected = self.detection_probability > np.random.rand()
             if detected:
                 noise = multivariate_normal.rvs(mean=np.zeros(2), cov=self.measurement_covariance)
                 target_measurements.append(Measurement(target, timestamp, self.measurement_covariance))
-        N_clutter = np.random.poisson(self.density*self.area)
-        x_coords = np.random.uniform(self.x_lims[0], self.x_lims[1], N_clutter)
-        y_coords = np.random.uniform(self.y_lims[0], self.y_lims[1], N_clutter)
-        clutter_points = [np.hstack((x_coords[i], y_coords[i])) for i in range(N_clutter)]
-        clutter_measurements = [Measurement(clutter_points[i], timestamp, self.measurement_covariance) for i in range(N_clutter)]
+        if self.density > 0:
+            N_clutter = np.random.poisson(self.density*self.area)
+            x_coords = np.random.uniform(self.x_lims[0], self.x_lims[1], N_clutter)
+            y_coords = np.random.uniform(self.y_lims[0], self.y_lims[1], N_clutter)
+            clutter_points = [np.hstack((x_coords[i], y_coords[i])) for i in range(N_clutter)]
+            clutter_measurements = [Measurement(clutter_points[i], timestamp, self.measurement_covariance) for i in range(N_clutter)]
+        else:
+            clutter_measurements = []
         return target_measurements+clutter_measurements
 
 class Estimate(object):
@@ -161,6 +166,88 @@ class ProbabilisticDataAssociation(object):
             cov_posterior = betas[-1]*estimate.cov_prior+(1-betas[-1])*P_c+soi
             estimate.cov_posterior = 0.5*(cov_posterior+cov_posterior.T)
 
+    def gate_measurements(self, measurements, estimate):
+        if len(measurements) > 0:
+            is_gated = [False for _ in measurements]
+            # Assume all the measurement have the same mapping and covariance
+            H = measurements[0].measurement_matrix
+            R = measurements[0].covariance
+            S = H.dot(estimate.cov_prior).dot(H.T)+R
+            gamma = chi2(df=2).ppf(self.P_G)
+            z_hat = H.dot(estimate.est_prior)
+            for idx, measurement in enumerate(measurements):
+                z = measurement.value
+                nu = z-z_hat
+                nu_vec = nu.reshape((2,1))
+                NIS = nu_vec.T.dot(np.linalg.inv(S).dot(nu_vec))
+                if NIS < gamma:
+                    estimate.measurements.append(measurement)
+                    is_gated[idx] = True
+        else:
+            is_gated = []
+        return is_gated
+
+
+class IntegratedPDA(object):
+    def __init__(self, P_D, P_G, p0):
+        self.p_continuation = 1
+        self.p_birth = 0
+        self.p_death = 1-self.p_continuation
+        self.P_D = P_D
+        self.P_G = P_G
+        self.gamma = chi2(df=2).ppf(P_G)
+        self.prob_existence = p0
+
+    def __repr__(self):
+        pass
+
+    def calculate_posterior(self, estimate):
+        # Propagate the existence probability
+        self.prob_existence = self.p_continuation*self.prob_existence+self.p_birth*(1-self.prob_existence)
+        if len(estimate.measurements) is 0:
+            delta = self.P_D*self.P_G
+            estimate.est_posterior = estimate.est_prior
+            estimate.cov_posterior = estimate.cov_prior
+            self.prob_existence = (1-delta)*self.prob_existence/(1-delta*self.prob_existence)
+        else:
+            measurements = estimate.measurements
+            delta = 1.0
+            H = measurements[0].measurement_matrix
+            R = measurements[0].covariance
+            z_hat = H.dot(estimate.est_prior)
+            S = H.dot(estimate.cov_prior).dot(H.T)+R
+            V_k = np.pi*np.sqrt(np.linalg.det(self.gamma*S))
+            m_k = 1.*len(measurements)
+            innovations = [False for _ in measurements]
+            likelihoods = [False for _ in measurements]
+            for z_idx, measurement in enumerate(estimate.measurements):
+                z = measurement.value
+                innovations[z_idx] = z-z_hat
+                likelihoods[z_idx] = multivariate_normal(np.zeros(2), measurement.covariance).pdf(z-z_hat)
+                delta -= likelihoods[z_idx]*V_k/m_k
+            delta = delta*self.P_D*self.P_G
+            self.prob_existence = (1-delta)*self.prob_existence/(1-delta*self.prob_existence)
+            betas = np.zeros(len(estimate.measurements)+1)
+            for z_idx, innovation in enumerate(innovations):
+                betas[z_idx] = self.P_D*self.P_G*V_k*likelihoods[z_idx]/(m_k*(1-delta))
+            betas[-1] = (1-self.P_D*self.P_G)/(1-delta)
+            betas = betas/(1.*np.sum(betas))
+            cov_terms = np.zeros((2,2))
+            for z_idx, innov in enumerate(innovations):
+                innov_vec = innov.reshape((2,1))
+                cov_terms += betas[z_idx]*np.dot(innov_vec, innov_vec.T)
+            gain = np.dot(estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
+            total_innovation = sum(innovations)
+            estimate.est_posterior = estimate.est_prior+np.dot(gain, total_innovation)
+            total_innovation_vec = total_innovation.reshape((2,1))
+            cov_terms = cov_terms-np.dot(total_innovation_vec, total_innovation_vec.T)
+            soi = np.dot(gain, np.dot(cov_terms, gain.T))
+            P_c = estimate.cov_prior-np.dot(gain, np.dot(S, gain.T))
+            cov_posterior = betas[-1]*estimate.cov_prior+(1-betas[-1])*P_c+soi
+            estimate.cov_posterior = 0.5*(cov_posterior+cov_posterior.T)
+        return estimate, self.prob_existence
+
+
 def gate_measurements(measurement_list, estimate, gate_probability):
     if len(measurement_list) > 0:
         is_gated = [False for _ in measurement_list]
@@ -181,3 +268,19 @@ def gate_measurements(measurement_list, estimate, gate_probability):
         return is_gated
     else:
         return []
+
+def PDA_update(estimate, innovations, betas, gain):
+    # betas n_z+1 length, the last element is the zero measurement update
+    # gain is the standard Kalman gain
+    cov_terms = np.zeros((2,2))
+    for innov, beta in zip(innovations, betas):
+        innov_vec = innov.reshape((2,1))
+        cov_terms += beta*np.dot(innov_vec, innov_vec.T)
+    total_innovation = sum(innovations)
+    estimate.est_posterior = estimate.est_prior+np.dot(gain, total_innovation)
+    total_innovation_vec = total_innovation.reshape((2,1))
+    cov_terms = cov_terms-np.dot(total_innovation_vec, total_innovation_vec.T)
+    soi = np.dot(gain, np.dot(cov_terms, gain.T))
+    P_c = estimate.cov_prior-np.dot(gain, np.dot(S, gain.T))
+    cov_posterior = betas[-1]*estimate.cov_prior+(1-betas[-1])*P_c+soi
+    estimate.cov_posterior = 0.5*(cov_posterior+cov_posterior.T)

@@ -118,6 +118,10 @@ class TargetShip(object):
         axes[1].plot(self.time, self.states[3,:])
         axes[1].set_title('Velocity (east)')
 
+    def generate_trajectory(self, v_ref):
+        for t_idx, timestamp in enumerate(self.time):
+            self.step(t_idx, v_ref)
+
 class NonlinearStochasticModel(object):
     def __init__(self):
         self.theta_eta = np.diag((0, 0, 2, 5, 5, 15))

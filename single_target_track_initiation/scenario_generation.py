@@ -1,5 +1,6 @@
 import numpy as np
 from filtersim import shipmodels, tracking
+from matplotlib.cm import get_cmap
 
 def check_trajectory(trajectory, limits):
     outside = False
@@ -74,3 +75,13 @@ def visualize_mn_dict(est_dict, pos_ax, vel_axes=None):
                 vel_axes[0].plot(conf_time, conf_track[1, :],color=l[0].get_color())
                 l = vel_axes[1].plot(prelim_time, prelim_track[3,:])
                 vel_axes[1].plot(conf_time, conf_track[3, :],color=l[0].get_color())
+
+def visualize_ipda_list(estimates, probabilities, ax,cmap=get_cmap('Reds')):
+    est = np.zeros((4, len(estimates)))
+    prob = np.array(probabilities)
+    for idx, estimate in enumerate(estimates):
+        est[:,idx] = estimate.est_posterior
+    ax.plot(est[2,:], est[0,:], 'r')
+    for idx, p in enumerate(prob):
+        color = cmap(p)
+        ax.plot(est[2,idx], est[0,idx],'o',color=color)

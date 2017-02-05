@@ -1,5 +1,7 @@
 import numpy as np
 import filtersim.tracking as tracking
+from scipy.stats import chi2, multivariate_normal
+from ipdb import set_trace
 
 class m_of_n(object):
     def __init__(self, M, N, max_vel):
@@ -99,6 +101,7 @@ class IntegratedPDA(object):
         self.p0 = p0
         self.P_D = P_D
         self.P_G = P_G
+        self.gamma = chi2(df=2).ppf(self.P_G)
         self.p_c = 1
         self.p_b = 0
         self.max_vel = max_vel
@@ -110,9 +113,10 @@ class IntegratedPDA(object):
         pass
 
     def offline_processing(self, measurements_all, timestamps, target_model):
+        estimates = []
+        probabilities = []
         current_estimate = None
-        for t, measurements in zip(measurements_all, timestamps):
-
+        for measurements, t in zip(measurements_all, timestamps):
             m_k = len(measurements)
             # First handle no measurements
             if m_k == 0:
@@ -131,21 +135,35 @@ class IntegratedPDA(object):
                 if current_estimate is None: #Find some initializing method
                     current_estimate = self.setup_estimate(measurements, t)
                 else: #This is the normal IPDA step
+                    # First, gate the measurements
+                    is_gated = tracking.gate_measurements(measurements, current_estimate, self.P_G)
+                    measurements = [measurement for (measurement, inside) in zip(measurements, is_gated) if inside]
+                    m_k = len(measurements)
                     current_estimate = tracking.Estimate.from_estimate(t, current_estimate, target_model, np.zeros(2))
-                    z_hat = H.dot(estimate.est_prior)
-                    S = H.dot(estimate.cov_prior).dot(H.T)+R
-                    gain = np.dot(estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
-                    self.existence_probability = (1-delta)*self.existence_probability/(1-delta*self.existence_probability)
-                    betas = np.zeros(m_k+1)
+                    z_hat = H.dot(current_estimate.est_prior)
+                    S = H.dot(current_estimate.cov_prior).dot(H.T)+R
+                    V_k = np.pi*np.sqrt(self.gamma*np.linalg.det(S))
+                    gain = np.dot(current_estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
+                    delta = self.P_G*self.P_D
+                    likelihoods = np.zeros(m_k)
                     innovations = np.zeros((2, m_k))
                     for idx, z in enumerate(measurements):
                         innovations[:, idx] = z.value-z_hat
-                        likelihood = multivariate_normal.pdf(innovations[:, idx], np.zeros(2), S)
-                        betas[idx] = self.P_D*self.P_G*V_k*likelihood/(m_k*(1-delta))
+                        likelihoods[idx] = multivariate_normal.pdf(innovations[:, idx], np.zeros(2), S)
+                        delta -= self.P_D*self.P_G*likelihoods[idx]*V_k/float(m_k)
+                    self.existence_probability = (1-delta)*self.existence_probability/(1-delta*self.existence_probability)
+                    betas = np.zeros(m_k+1)
+                    for idx, z in enumerate(measurements):
+                        betas[idx] = self.P_D*self.P_G*V_k*likelihoods[idx]/(m_k*(1-delta))
                     betas[-1] = (1-self.P_D*self.P_G)/(1-delta)
-                    tracking.PDA_update(estimate, innovations, betas, gain)
+                    betas /= np.sum(betas)
+                    tracking.PDA_update(current_estimate, innovations, betas, gain, S)
+            if current_estimate is not None:
+                estimates.append(current_estimate)
+                probabilities.append(self.existence_probability)
+        return estimates, probabilities
             
-    def setup_estimate(measurements, timestamp):
+    def setup_estimate(self, measurements, timestamp):
         n_z = len(measurements)
         z = np.zeros((2, n_z))
         for idx, meas in enumerate(measurements):
@@ -165,4 +183,6 @@ class IntegratedPDA(object):
         cov[2, 2] = sample_cov[1, 1]
         cov[1, 1] = self.max_vel**2
         cov[3, 3] = self.max_vel**2
-        estimate = tracking.Estimate(timestamp, mean, covariance, is_posterior=True, track_index=1)
+        estimate = tracking.Estimate(timestamp, mean, cov, is_posterior=True, track_index=1)
+        self.existence_probability = self.p0
+        return estimate

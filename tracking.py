@@ -269,14 +269,18 @@ def gate_measurements(measurement_list, estimate, gate_probability):
     else:
         return []
 
-def PDA_update(estimate, innovations, betas, gain):
+def PDA_update(estimate, innovations, betas, gain, S):
     # betas n_z+1 length, the last element is the zero measurement update
     # gain is the standard Kalman gain
     cov_terms = np.zeros((2,2))
-    for innov, beta in zip(innovations, betas):
+    #for innov, beta in zip(innovations.T, betas):
+    total_innovation = np.zeros(2)
+    for idx in range(len(betas)-1):
+        innov = innovations[:,idx]
+        beta = betas[idx]
+        total_innovation += beta*innov
         innov_vec = innov.reshape((2,1))
         cov_terms += beta*np.dot(innov_vec, innov_vec.T)
-    total_innovation = sum(innovations)
     estimate.est_posterior = estimate.est_prior+np.dot(gain, total_innovation)
     total_innovation_vec = total_innovation.reshape((2,1))
     cov_terms = cov_terms-np.dot(total_innovation_vec, total_innovation_vec.T)

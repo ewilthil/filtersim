@@ -53,16 +53,9 @@ for t_idx, t in enumerate(time):
     measurements_associated = [False for _ in measurements]
 
     # Gate confirmed targets
-    for estimate in confirmed_estimates:
-        is_gated = tracking.gate_measurements(measurements, estimate, P_G)
-        measurements_associated = [item[0] or item[1] for item in zip(measurements_associated, is_gated)]
-    measurements = [m for (m, v) in zip(measurements, measurements_associated) if not v]
+    measurements = tracking.gate_measurements(measurements, confirmed_estimates, P_G)
     # Gate preliminary targets
-    for estimate in preliminary_estimates:
-        is_gated = tracking.gate_measurements(measurements, estimate, P_G)
-        measurements_associated = [item[0] or item[1] for item in zip(measurements_associated, is_gated)]
-    measurements = [m for (m, v) in zip(measurements, measurements_associated) if not v]
-
+    measurements = tracking.gate_measurements(measurements, preliminary_estimates, P_G)
     # Measurement update using the associated measurements
     [PDA.calculate_posterior(estimate) for estimate in confirmed_estimates+preliminary_estimates]
     # Perform track initiation and update preliminary/confirmed track list

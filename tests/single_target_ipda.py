@@ -45,7 +45,7 @@ for t_idx, timestamp in enumerate(time):
          current_estimate = initial_estimate
     state_target = [true_target.states[:,t_idx]]
     measurements_all[t_idx] = measurement_model.generate_measurements(state_target, timestamp)
-    tracking.gate_measurements(measurements_all[t_idx], current_estimate, P_G)
+    tracking.gate_measurements(measurements_all[t_idx], [current_estimate], P_G)
     post_est, prob = IPDA.calculate_posterior(current_estimate)
     print prob
     existence_probability[t_idx] = prob

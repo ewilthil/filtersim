@@ -31,7 +31,7 @@ for t_idx, t in enumerate(time):
         current_estimate = initial_estimate
     measurement_target = [target.cartesian_position_measurement(t_idx)]
     measurements_all[t_idx] = measurement_model.generate_measurements(measurement_target, t)
-    tracking.gate_measurements(measurements_all[t_idx], current_estimate, P_G)
+    tracking.gate_measurements(measurements_all[t_idx], [current_estimate], P_G)
     PDA.calculate_posterior(current_estimate)
     estimates.append(current_estimate)
 

@@ -34,3 +34,17 @@ def van_loan_discretization(dt, A, B=None, Q=None):
 
 def sksym(x):
     return np.array([[0, -x[2], x[1]],[x[2], 0, -x[0]], [-x[1], x[0], 0]])
+
+class Node(object):
+    def __init__(self, value, parent=None):
+        self.value = value
+        self.parent = parent
+        self.children = None
+
+    def add_child(self, new_child):
+        if self.children is None:
+            self.children = []
+        self.children.append(new_child)
+
+    def set_parent(self, new_parent):
+        self.parent = new_parent

@@ -103,7 +103,7 @@ class IntegratedPDA(object):
         self.P_G = P_G
         self.gamma = chi2(df=2).ppf(self.P_G)
         self.p_c = 1
-        self.p_b = 0
+        self.p_b = 0.1
         self.max_vel = max_vel
 
     def __repr__(self):
@@ -116,52 +116,62 @@ class IntegratedPDA(object):
         estimates = []
         probabilities = []
         current_estimate = None
+        existence_probability = 0
         for measurements, t in zip(measurements_all, timestamps):
             m_k = len(measurements)
             # First handle no measurements
             if m_k == 0:
                 if current_estimate is not None: # Do a step with no measurements
                     current_estimate = tracking.Estimate.from_estimate(t, current_estimate, target_model, np.zeros(2))
-                    self.existence_probability = self.p_c*self.existence_probability+p_b*(1-self.existence_probability)
+                    existence_probability = self.p_c*existence_probability+p_b*(1-existence_probability)
                     current_estimate.est_posterior = current_estimate.est_prior
                     current_estimate.cov_posterior = current_estimate.cov_posterior
                     delta = self.P_D*self.P_G
-                    self.existence_probability = (1-delta)*self.existence_probability/(1-delta*self.existence_probability)
+                    existence_probability = (1-delta)*existence_probability/float(1-delta*existence_probability)
                 else: # No measurements, no prior estimate: Do nothing
                     pass
             else: # There are measurements
-                H = measurements[0].measurement_matrix
-                R = measurements[0].covariance
-                if current_estimate is None: #Find some initializing method
-                    current_estimate = self.setup_estimate(measurements, t)
+                if current_estimate is None:
+                    current_estimate, existence_probability = self.setup_estimate(measurements, t)
                 else: #This is the normal IPDA step
-                    # First, gate the measurements
                     is_gated = tracking.gate_measurements(measurements, current_estimate, self.P_G)
                     measurements = [measurement for (measurement, inside) in zip(measurements, is_gated) if inside]
-                    m_k = len(measurements)
-                    current_estimate = tracking.Estimate.from_estimate(t, current_estimate, target_model, np.zeros(2))
-                    z_hat = H.dot(current_estimate.est_prior)
-                    S = H.dot(current_estimate.cov_prior).dot(H.T)+R
-                    V_k = np.pi*np.sqrt(self.gamma*np.linalg.det(S))
-                    gain = np.dot(current_estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
-                    delta = self.P_G*self.P_D
-                    likelihoods = np.zeros(m_k)
-                    innovations = np.zeros((2, m_k))
-                    for idx, z in enumerate(measurements):
-                        innovations[:, idx] = z.value-z_hat
-                        likelihoods[idx] = multivariate_normal.pdf(innovations[:, idx], np.zeros(2), S)
-                        delta -= self.P_D*self.P_G*likelihoods[idx]*V_k/float(m_k)
-                    self.existence_probability = (1-delta)*self.existence_probability/(1-delta*self.existence_probability)
-                    betas = np.zeros(m_k+1)
-                    for idx, z in enumerate(measurements):
-                        betas[idx] = self.P_D*self.P_G*V_k*likelihoods[idx]/(m_k*(1-delta))
-                    betas[-1] = (1-self.P_D*self.P_G)/(1-delta)
-                    betas /= np.sum(betas)
-                    tracking.PDA_update(current_estimate, innovations, betas, gain, S)
+                    current_estimate, existence_probability = self.calculate_posterior(current_estimate, measurements, existence_probability, target_model, t)
             if current_estimate is not None:
                 estimates.append(current_estimate)
-                probabilities.append(self.existence_probability)
+                probabilities.append(existence_probability)
         return estimates, probabilities
+
+    def calculate_posterior(self, estimate, measurements, existence_probability, target_model, timestamp):
+        # Time step
+        estimate = tracking.Estimate.from_estimate(timestamp, estimate, target_model, np.zeros(2))
+        existence_probability = self.p_c*existence_probability+self.p_b*(1-existence_probability)
+        m_k = len(measurements)
+        if m_k > 0:
+            H = measurements[0].measurement_matrix
+            R = measurements[0].covariance
+            z_hat = H.dot(estimate.est_prior)
+            S = H.dot(estimate.cov_prior).dot(H.T)+R
+            V_k = np.pi*np.sqrt(self.gamma*np.linalg.det(S))
+            gain = np.dot(estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
+            delta = self.P_G*self.P_D
+            likelihoods = np.zeros(m_k)
+            innovations = np.zeros((2, m_k))
+            for idx, z in enumerate(measurements):
+                innovations[:, idx] = z.value-z_hat
+                likelihoods[idx] = multivariate_normal.pdf(innovations[:, idx], np.zeros(2), S)
+                delta -= self.P_D*self.P_G*likelihoods[idx]*V_k/float(m_k)
+            existence_probability = (1-delta)*existence_probability/(1-delta*existence_probability)
+            betas = np.zeros(m_k+1)
+            for idx, z in enumerate(measurements):
+                betas[idx] = self.P_D*self.P_G*V_k*likelihoods[idx]/(m_k*(1-delta))
+            betas[-1] = (1-self.P_D*self.P_G)/(1-delta)
+            betas /= np.sum(betas)
+            tracking.PDA_update(estimate, measurements, betas)
+        else:
+            tracking.DR_update(estimate)
+
+        return estimate, existence_probability
             
     def setup_estimate(self, measurements, timestamp):
         n_z = len(measurements)
@@ -184,5 +194,57 @@ class IntegratedPDA(object):
         cov[1, 1] = self.max_vel**2
         cov[3, 3] = self.max_vel**2
         estimate = tracking.Estimate(timestamp, mean, cov, is_posterior=True, track_index=1)
-        self.existence_probability = self.p0
-        return estimate
+        existence_probability = self.p0
+        return estimate, existence_probability
+
+class SequentialTrackExtraction(object):
+    def __init__(self, P0=0.01, P1=0.99):
+        # P1: P(Accept H1 | H1)
+        # P0: P(Accept H1 | H0)
+        self.lower_bound = (1-P1)/(1-P0)
+        self.upper_bound = P1/P0
+
+    def __repr__(self):
+        pass
+
+    def offline_processing(self, measurements_all, timestamps, target_model, windowsize=None):
+        from filtersim.common_math import Node
+        if windowsize is None:
+            windowsize=len(measurements_all)
+        measurements_all = measurements_all[:windowsize]
+        # Construct the tree
+        Tree = Node('root')
+        for measurements in measurements_all:
+            new_leafnodes = []
+            for leafnode in leafnodes:
+                for measurement in measurements:
+                    new_node = Node(measurement, parent=leafnode)
+                    leafnode.add_child(new_node)
+                    new_leafnodes.append(new_node)
+
+    def extract_measurement_set(self, measurements_all, indices):
+        selected_measurements = []
+        for measurements, index in zip(measurements_all, indices):
+            selected_measurements.append(measurements[index])
+        return selected_measurements
+
+class Initiator(object):
+    def __init__(self, v_max=np.inf):
+        self.tentative_tracks = []
+        self.v_max = v_max
+
+    def __repr__(self):
+        pass
+
+    def step(self, measurements):
+        new_estimates = []
+        is_taken = [False for _ in measurements]
+        for initiator in self.tentative_tracks:
+            for z_idx, new_measurement in enumerate(measurements):
+                estimates = tracking.Estimate.from_measurement(initiator, measurement)
+                current_state = estimates[1].est_posterior
+                if np.sqrt(current_state[1]**2+current_state[3]**2) < self.v_max:
+                    new_estimates.append(estimates)
+                    is_taken[z_idx] = True
+        self.tentative_tracks = [z for z, idx in enumerate(measurements) if not is_taken[idx]]
+        return new_estimates

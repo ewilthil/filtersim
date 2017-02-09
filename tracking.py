@@ -248,43 +248,49 @@ class IntegratedPDA(object):
         return estimate, self.prob_existence
 
 
-def gate_measurements(measurement_list, estimate, gate_probability):
+def gate_measurements(measurement_list, estimate_list, gate_probability):
+    # Gate the measurements to all the estimates, and return a list of the measurements not used in any of the estimates.
     if len(measurement_list) > 0:
         is_gated = [False for _ in measurement_list]
         # Assume all the measurement have the same mapping and covariance
         H = measurement_list[0].measurement_matrix
         R = measurement_list[0].covariance
-        S = H.dot(estimate.cov_prior).dot(H.T)+R
         gamma = chi2(df=2).ppf(gate_probability)
-        z_hat = H.dot(estimate.est_prior)
-        for idx, measurement in enumerate(measurement_list):
-            z = measurement.value
-            nu = z-z_hat
-            nu_vec = nu.reshape((2,1))
-            NIS = nu_vec.T.dot(np.linalg.inv(S).dot(nu_vec))
-            if NIS < gamma:
-                estimate.measurements.append(measurement)
-                is_gated[idx] = True
+        for estimate in estimate_list:
+            z_hat = H.dot(estimate.est_prior)
+            S = H.dot(estimate.cov_prior).dot(H.T)+R
+            for idx, measurement in enumerate(measurement_list):
+                z = measurement.value
+                nu = z-z_hat
+                nu_vec = nu.reshape((2,1))
+                NIS = nu_vec.T.dot(np.linalg.inv(S).dot(nu_vec))
+                if NIS < gamma:
+                    estimate.measurements.append(measurement)
+                    is_gated[idx] = True
+        unused_measurements = [meas for idx, meas in enumerate(measurement_list) if not is_gated[idx]]
         return is_gated
     else:
         return []
 
-def PDA_update(estimate, innovations, betas, gain, S):
-    # betas n_z+1 length, the last element is the zero measurement update
-    # gain is the standard Kalman gain
-    cov_terms = np.zeros((2,2))
-    #for innov, beta in zip(innovations.T, betas):
+def weighted_update(estimate, measurements, weights):
+    H = measurements[0].measurement_matrix
+    R = measurements[0].covariance
+    S = H.dot(estimate.cov_prior).dot(H.T)+R
+    K = estimate.cov_prior.dot(H.T).dot(np.linalg.inv(S))
+    z_hat = H.dot(estimate.est_prior)
     total_innovation = np.zeros(2)
-    for idx in range(len(betas)-1):
-        innov = innovations[:,idx]
-        beta = betas[idx]
-        total_innovation += beta*innov
-        innov_vec = innov.reshape((2,1))
-        cov_terms += beta*np.dot(innov_vec, innov_vec.T)
-    estimate.est_posterior = estimate.est_prior+np.dot(gain, total_innovation)
+    spread_of_innovations = np.zeros((2, 2))
+    for idx, measurement in enumerate(measurements):
+        innovation = measurement.value-z_hat
+        total_innovation += weights[idx]*innovation
+        innov_vec = innovation.reshape((2,1))
+        spread_of_innovations += weights[idx]*innov_vec.dot(innov_vec.T)
     total_innovation_vec = total_innovation.reshape((2,1))
-    cov_terms = cov_terms-np.dot(total_innovation_vec, total_innovation_vec.T)
-    soi = np.dot(gain, np.dot(cov_terms, gain.T))
-    P_c = estimate.cov_prior-np.dot(gain, np.dot(S, gain.T))
-    cov_posterior = betas[-1]*estimate.cov_prior+(1-betas[-1])*P_c+soi
-    estimate.cov_posterior = 0.5*(cov_posterior+cov_posterior.T)
+    spread_of_innovations -= total_innovation_vec.dot(total_innovation_vec.T)
+    estimate.est_posterior = estimate.est_prior+K.dot(total_innovation)
+    estimate.cov_posterior = estimate.cov_posterior-(1-weights[-1])*K.dot(S).dot(K.T)+K.dot(spread_of_innovations).dot(K.T)
+    estimate.cov_posterior = 0.5*(estimate.cov_posterior+estimate.cov_posterior.T)
+
+def DR_update(estimate):
+    estimate.est_posterior = estimate.est_prior
+    estimate.cov_posterior = estimate.cov_prior

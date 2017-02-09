@@ -35,8 +35,8 @@ def generate_measurements(time, trajectory, measurement_model):
         measurements_all.append(measurements)
     return measurements_all
 
-def generate_scenario(P_D=1, clutter_density=10./(500**2), sigma=0.3):
-    time, traj, motion_model = generate_trajectory(sigma=sigma)
+def generate_scenario(P_D=1, clutter_density=10./(500**2), sigma=0.3, T=30):
+    time, traj, motion_model = generate_trajectory(T=T, sigma=sigma)
     R = 7**2*np.identity(2)
     measurement_model = tracking.MeasurementModel(
             target_cov=R,

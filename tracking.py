@@ -36,7 +36,7 @@ class MeasurementModel(object):
             detected = self.detection_probability > np.random.rand()
             if detected:
                 noise = multivariate_normal.rvs(mean=np.zeros(2), cov=self.measurement_covariance)
-                target_measurements.append(Measurement(target, timestamp, self.measurement_covariance))
+                target_measurements.append(Measurement(target+noise, timestamp, self.measurement_covariance))
         if self.density > 0:
             N_clutter = np.random.poisson(self.density*self.area)
             x_coords = np.random.uniform(self.x_lims[0], self.x_lims[1], N_clutter)

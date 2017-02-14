@@ -150,21 +150,8 @@ class ProbabilisticDataAssociation(object):
                 e[i] = np.exp(-0.5*nu.dot(np.linalg.inv(S)).dot(nu))
             betas = np.hstack((e, b))
             betas = betas/(1.*np.sum(betas))
-            gain = np.dot(estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
-            total_innovation = np.zeros(2)
-            cov_terms = np.zeros((2,2))
-            for i in range(N_measurements):
-                innov = innovations[i]
-                total_innovation += betas[i]*innov
-                innov_vec = innov.reshape((2,1))
-                cov_terms += betas[i]*np.dot(innov_vec, innov_vec.T)
-            estimate.est_posterior = estimate.est_prior+np.dot(gain, total_innovation)
-            total_innovation_vec = total_innovation.reshape((2,1))
-            cov_terms = cov_terms-np.dot(total_innovation_vec, total_innovation_vec.T)
-            soi = np.dot(gain, np.dot(cov_terms, gain.T))
-            P_c = estimate.cov_prior-np.dot(gain, np.dot(S, gain.T))
-            cov_posterior = betas[-1]*estimate.cov_prior+(1-betas[-1])*P_c+soi
-            estimate.cov_posterior = 0.5*(cov_posterior+cov_posterior.T)
+            weighted_update(estimate, measurements, betas)
+
 
     def gate_measurements(self, measurements, estimate):
         if len(measurements) > 0:
@@ -288,7 +275,7 @@ def weighted_update(estimate, measurements, weights):
     total_innovation_vec = total_innovation.reshape((2,1))
     spread_of_innovations -= total_innovation_vec.dot(total_innovation_vec.T)
     estimate.est_posterior = estimate.est_prior+K.dot(total_innovation)
-    estimate.cov_posterior = estimate.cov_posterior-(1-weights[-1])*K.dot(S).dot(K.T)+K.dot(spread_of_innovations).dot(K.T)
+    estimate.cov_posterior = estimate.cov_prior-(1-weights[-1])*K.dot(S).dot(K.T)+K.dot(spread_of_innovations).dot(K.T)
     estimate.cov_posterior = 0.5*(estimate.cov_posterior+estimate.cov_posterior.T)
 
 def DR_update(estimate):

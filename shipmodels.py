@@ -86,6 +86,7 @@ class IntegratedMOU(LinearStochasticModel):
         B = np.array([[0], [0], [theta]])
         G = np.array([[0], [0], [1]])
         Q = sigma*G.dot(G.T)
+        return A, B, Q
 
 class TargetShip(object):
     def __init__(self, time, model, x0):

@@ -57,10 +57,22 @@ class m_of_n(object):
                 self.preliminary_indices[est.track_index] = (m, n)
         return confirmed_estimates, preliminary_estimates
 
-    def offline_processing(self, measurements_all, timestamps, posterior_method, target_model):
+    def fuse_tracks(self, estimate_list):
+        new_estimates = []
+        while len(estimate_list) > 0:
+            est_under_test = estimate_list.pop(0)
+            for est_idx in range(1, len(estimate_list))[::-1]: # Reverse to not mess with iterator
+                if est_under_test.merge_test(estimate_list[est_idx], 0.99):
+                    est_under_test = tracking.merge_estimates(est_under_test, estimate_list[est_idx])
+                    estimate_list.pop(est_idx)
+            new_estimates.append(est_under_test)
+        return new_estimates
+
+    def offline_processing(self, measurements_all, timestamps, posterior_method, target_model, termination_steps=np.inf):
         confirmed_estimates = []
         preliminary_estimates = []
         all_estimates = dict()
+        termination_dict = dict()
         for measurements, t in zip(measurements_all, timestamps):
             # Step old estimates
             confirmed_estimates = [tracking.Estimate.from_estimate(t, est, target_model, np.zeros(2))for est in confirmed_estimates]
@@ -93,6 +105,24 @@ class m_of_n(object):
                 if track_idx not in all_estimates.keys():
                     all_estimates[track_idx] = []
                 all_estimates[track_idx].append((est, 'PRELIMINARY'))
+            # Termination
+            surviving_confirmed_estimates = []
+            for est in confirmed_estimates:
+                track_idx = est.track_index
+                if track_idx not in termination_dict.keys():
+                    termination_dict[track_idx] = 0
+                if len(est.measurements) == 0:
+                    termination_dict[track_idx] += 1
+                else:
+                    termination_dict[track_idx] = 0
+                if termination_dict[track_idx] > termination_steps:
+                    pass
+                else:
+                    surviving_confirmed_estimates.append(est)
+            confirmed_estimates = surviving_confirmed_estimates
+            # Fusion
+            confirmed_estimates = self.fuse_tracks(confirmed_estimates)
+            preliminary_estimates = self.fuse_tracks(preliminary_estimates)
         return all_estimates
 
 

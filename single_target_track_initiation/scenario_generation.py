@@ -46,10 +46,15 @@ def generate_scenario(P_D=1, clutter_density=10./(500**2), sigma=0.3, T=30):
     measurements = generate_measurements(time, traj, measurement_model)
     return time, traj, measurements, motion_model, measurement_model
 
-def visualize_mn_dict(est_dict, pos_ax, vel_axes=None):
-    for track_id, est_list in est_dict.items():
+def visualize_mn_dict(est_dict, pos_ax, vel_axes=None, colors=None):
+    if colors is None:
+        colors = ['k' for _ in range(len(est_dict.keys()))]
+    for idx, items in enumerate(est_dict.items()):
+        track_id, est_list = items
+        color = colors[idx]
         prelim_ests = []
         conf_ests = []
+        measurements = []
         for est, status in est_list:
             if status == 'CONFIRMED':
                 conf_ests.append(est)
@@ -61,20 +66,29 @@ def visualize_mn_dict(est_dict, pos_ax, vel_axes=None):
             for idx, est in enumerate(prelim_ests):
                 prelim_track[:, idx] = est.est_posterior
                 prelim_time[idx] = est.timestamp
-            pos_ax.plot(prelim_track[2,:], prelim_track[0,:], 'k--')
+                [measurements.append(m) for m in est.measurements]
+            pos_ax.plot(prelim_track[2,:], prelim_track[0,:], '--',color=color)
             conf_track = np.zeros((4, len(conf_ests)+1))
             conf_time = np.zeros(len(conf_ests)+1)
             for idx, est in enumerate(conf_ests):
                 conf_track[:, idx+1] = est.est_posterior
                 conf_time[idx+1] = est.timestamp
+                [measurements.append(m) for m in est.measurements]
             conf_track[:,0] = prelim_track[:,-1]
             conf_time[0] = prelim_time[-1]
-            pos_ax.plot(conf_track[2,:], conf_track[0,:], 'k')
+            pos_ax.plot(conf_track[2,:], conf_track[0,:], 'k', color=color)
+            [pos_ax.plot(z.value[1], z.value[0], 'o', color=color,ms=6) for z in measurements]
             if vel_axes is not None:
-                l = vel_axes[0].plot(prelim_time, prelim_track[1,:])
-                vel_axes[0].plot(conf_time, conf_track[1, :],color=l[0].get_color())
-                l = vel_axes[1].plot(prelim_time, prelim_track[3,:])
-                vel_axes[1].plot(conf_time, conf_track[3, :],color=l[0].get_color())
+                l = vel_axes[0].plot(prelim_time, prelim_track[1,:], '--', color=color)
+                vel_axes[0].plot(conf_time, conf_track[1, :],color=color)
+                l = vel_axes[1].plot(prelim_time, prelim_track[3,:], '--', color=color)
+                vel_axes[1].plot(conf_time, conf_track[3, :],color=color)
+                if len(vel_axes) > 2:
+                    pre_course = np.arctan2(prelim_track[3,:], prelim_track[1,:])
+                    conf_course = np.arctan2(conf_track[3,:], conf_track[1,:])
+                    vel_axes[2].plot(prelim_time, np.rad2deg(pre_course), '--', color=color)
+                    vel_axes[2].plot(conf_time, np.rad2deg(conf_course), color=color)
+
 
 def visualize_ipda_list(estimates, probabilities, ax,cmap=get_cmap('Reds')):
     est = np.zeros((4, len(estimates)))

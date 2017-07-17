@@ -90,10 +90,17 @@ class Estimate(object):
         self.est_posterior = self.est_prior
         self.cov_posterior = self.cov_prior
 
+    def merge_test(self, other_est, merge_probability=0.99):
+        delta = self.est_posterior-other_est.est_posterior
+        T = self.cov_posterior+self.cov_posterior-2*0.4*self.cov_posterior
+        delta_vec = delta.reshape((4,1))
+        D = delta_vec.T.dot(np.linalg.inv(T).dot(delta_vec)).squeeze()
+        return D < chi2(df=2).ppf(merge_probability)
+
     @classmethod
     def from_estimate(cls, timestamp, old_estimate, target_model, u):
         dt = timestamp - old_estimate.timestamp
-        F, B, Q = target_model.discretize_system(dt)
+        F, B, Q = target_model.discretize_system(dt, old_estimate.est_posterior)
         mean = F.dot(old_estimate.est_posterior)+B.dot(u)
         cov = F.dot(old_estimate.cov_posterior).dot(F.T)+Q
         return cls(timestamp, mean, cov, track_index=old_estimate.track_index)
@@ -281,3 +288,9 @@ def weighted_update(estimate, measurements, weights):
 def DR_update(estimate):
     estimate.est_posterior = estimate.est_prior
     estimate.cov_posterior = estimate.cov_prior
+
+def merge_estimates(est_1, est_2):
+    if est_1.timestamp < est_2.timestamp:
+        return est_1
+    else:
+        return est_2

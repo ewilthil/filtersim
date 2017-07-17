@@ -32,7 +32,7 @@ class LinearStochasticModel(object):
                 new_params[param_name] = params[param_name]
         return new_params
 
-    def discretize_system(self, dt):
+    def discretize_system(self, dt, current_state):
         Ad = [None for _ in range(self.n_dim)]
         Bd = [None for _ in range(self.n_dim)]
         Qd = [None for _ in range(self.n_dim)]
@@ -42,6 +42,20 @@ class LinearStochasticModel(object):
         Bd = block_diag(*Bd)
         Qd = block_diag(*Qd)
         return Ad, Bd, Qd
+
+class BestNorton(LinearStochasticModel):
+    def __init__(self, dt, sigmas):
+        pass
+
+    def discretize_system(self, dt, current_state):
+        F = np.array([[1, dt, 0, 0],[0, 1, 0, 0],[0, 0, 1, dt],[0, 0, 0, 1]])
+        B = np.zeros(2)
+        phi = np.arctan(current_state[1]/current_state[3])
+        omega = 
+        G = np.array([
+            [],
+            [],
+            ])
 
 class IntegratedOU(LinearStochasticModel):
     def default_parameters(self, n):

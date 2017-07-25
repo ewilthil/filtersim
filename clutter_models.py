@@ -1,6 +1,7 @@
 import numpy as np
 from collections import deque
 import ipdb
+from autoseapy.tracking import Measurement
 
 class CircleRegion(object):
     def __init__(self, density, center, radius):
@@ -89,27 +90,27 @@ class GeometricClutterMap(object):
         self.regions.append(region)
         self.area -= region.area
 
-    def generate_clutter(self):
+    def generate_clutter(self, timestamp):
         measurements = []
         for region in self.regions:
             n_region_measurement = np.random.poisson(lam=region.area*region.density)
             n_region_generated = 0
             while n_region_generated < n_region_measurement:
-                measurement = np.random.uniform(low=[region.N_min, region.E_min], high=[region.N_max, region.E_max])
-                if region.point_in_region(measurement):
-                    measurements.append(measurement)
+                meas_pos = np.random.uniform(low=[region.N_min, region.E_min], high=[region.N_max, region.E_max])
+                if region.point_in_region(meas_pos):
+                    measurements.append(Measurement(meas_pos, timestamp))
                     n_region_generated += 1
 
         n_base_region_measurements = np.random.poisson(lam=self.base_density*self.area)
         n_base_region_generated = 0
         while n_base_region_generated < n_base_region_measurements:
-            measurement = np.random.uniform(low=[self.N_min, self.E_min], high=[self.N_max, self.E_max])
+            meas_pos = np.random.uniform(low=[self.N_min, self.E_min], high=[self.N_max, self.E_max])
             in_other_cell = False
             for region in self.regions:
-                if region.point_in_region(measurement):
+                if region.point_in_region(meas_pos):
                     in_other_cell = True
             if not in_other_cell:
-                measurements.append(measurement)
+                measurements.append(Measurement(meas_pos, timestamp))
                 n_base_region_generated += 1
         return measurements
     
@@ -304,20 +305,11 @@ class SpatialClutterMap(ClutterMap):
     def get_averaging_values(self, measurements):
         cell_measurements = [[[] for _ in self.E_vec] for _ in self.N_vec]
         average_values = np.zeros((self.N_idx, self.E_idx))
-        for measurement in measurements:
-            n_idx, e_idx = self.pt2idx(measurement[0], measurement[1])
-            cell_measurements[n_idx][e_idx].append(measurement)
         for n_idx in range(self.N_idx):
             for e_idx in range(self.E_idx):
-                if len(cell_measurements[n_idx][e_idx]) < 0:
-                    average_values[n_idx, e_idx] = np.nan
-                else:
-                    center_point = np.array([self.N_vec[n_idx], self.E_vec[e_idx]])+np.array([self.resolution, self.resolution])
-                    norms = [np.linalg.norm(center_point-z, np.inf) for z in cell_measurements[n_idx][e_idx]]
-                    norms = [np.linalg.norm(center_point-z, np.inf) for z in measurements]
-                    average_values[n_idx, e_idx] = (2.*np.amin(norms))**2
-                    if np.any(np.isnan(norms)):
-                        ipdb.set_trace()
+                center_point = np.array([self.N_vec[n_idx], self.E_vec[e_idx]])+np.array([self.resolution, self.resolution])
+                norms = [np.linalg.norm(center_point-z.value, np.inf) for z in measurements]
+                average_values[n_idx, e_idx] = (2.*np.amin(norms))**2
         return average_values
 
     @classmethod

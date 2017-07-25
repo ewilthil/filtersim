@@ -8,7 +8,7 @@ grid_density = 20
 true_clutter_map = clutter_models.generate_true_clutter_map()
 classic_clutter_map = clutter_models.ClassicClutterMap.from_geometric_map(true_clutter_map, grid_density, N_timesteps)
 spatial_clutter_map = clutter_models.SpatialClutterMap.from_geometric_map(true_clutter_map, grid_density, N_timesteps)
-measurements_all  = [true_clutter_map.generate_clutter() for _ in range(N_timesteps)]
+measurements_all  = [true_clutter_map.generate_clutter(timestamp) for timestamp in range(N_timesteps)]
 for measurements in measurements_all:
     classic_clutter_map.update_estimate(measurements)
     spatial_clutter_map.update_estimate(measurements)

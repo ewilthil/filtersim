@@ -47,7 +47,7 @@ class PolygonRegion(object):
     def compute_area(self):
         x = np.array([v[0] for v in self.vertices])
         y = np.array([v[1] for v in self.vertices])
-        return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+        return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1))) # Shoelace method
 
     def ray_cross_edge(self, start_pt, edge):
         ray_start = start_pt
@@ -165,32 +165,6 @@ class DiscreteClutterMap(object):
         return int(N_idx), int(E_idx)
 
 
-def generate_true_clutter_map():
-    density_min = 5e-5
-    density_max = 1e-3
-    true_clutter_map = GeometricClutterMap(0, 400, 0, 400, density_min)
-
-    clutter_circle = CircleRegion(density_max, np.array([300, 300]), 50)
-    true_clutter_map.add_region(clutter_circle)
-
-    clutter_box = PolygonRegion(float(density_min+density_max)/2, [(300, 0), (400, 0), (400, 150), (300, 150)])
-    true_clutter_map.add_region(clutter_box)
-
-    n_transients = 5
-    N_start = 100
-    N_end = 200
-    dist_transient = float(N_end-N_start)/n_transients
-    density_resolution = float(density_max-density_min)/n_transients
-    N_points = np.linspace(N_start, N_end-dist_transient, n_transients)
-    E_points = N_points
-    vertices = []
-    densities = np.linspace(density_max-density_resolution, density_min+density_resolution, n_transients)
-    for N, E in zip(N_points, E_points):
-        v = [(N, 0), (N+dist_transient, 0), (0, E+dist_transient), (0, E)]
-        vertices.append(v)
-    [true_clutter_map.add_region(PolygonRegion(dens, v)) for (dens, v) in zip(densities, vertices)]
-    true_clutter_map.add_region(PolygonRegion(density_max, [(0, 0), (N_start, 0), (0, N_start)]))
-    return true_clutter_map
 
 class ClutterMap(object):
     def __init__(self, N_min, N_max, E_min, E_max, resolution, averaging_length, celltype):
@@ -251,8 +225,8 @@ class ClutterMap(object):
                     rel_diff = np.sign(rel_diff)*rel_diff_max
                 relative_difference[e_idx, n_idx] = rel_diff
         diff_max = np.amax(np.abs(relative_difference))
-        im_args['vmin'] = -diff_max
-        im_args['vmax'] = diff_max
+        im_args['vmin'] = -rel_diff_max
+        im_args['vmax'] = rel_diff_max
         cax = ax.pcolormesh(E_grid, N_grid, relative_difference, **im_args)
         fig = ax.get_figure()
         cbar = fig.colorbar(cax, orientation='horizontal',ax=ax)
@@ -285,9 +259,10 @@ class SpatialClutterCell(ClutterCell):
         return 1.0/inv_density
 
 class TemporalClutterCell(ClutterCell):
-    pass
-
-
+    def get_density(self):
+        tau = np.mean(self.averagor)
+        inv_density = self.area*tau
+        return 1.0/inv_density
 
 class ClassicClutterMap(ClutterMap):
     def get_averaging_values(self, measurements):
@@ -317,8 +292,31 @@ class SpatialClutterMap(ClutterMap):
         return super(SpatialClutterMap, cls).from_geometric_map(other_map, resolution, averaging_length, SpatialClutterCell)
 
 class TemporalClutterMap(ClutterMap):
-    def update_measurements(self, measurements):
-        pass
+    def get_averaging_values(self, measurements):
+        timestamp = measurements[0].timestamp # Assume all have same timestamp
+        cell_measurements = [[[] for _ in self.E_vec] for _ in self.N_vec]
+        averagor_values = np.zeros((self.N_idx, self.E_idx))*np.nan
+        for measurement in measurements:
+            N_idx, E_idx = self.pt2idx(measurement[0], measurement[1])
+            cell_measurements[N_idx][E_idx].append(measurement)
+        for n_idx in range(self.N_idx):
+            for e_idx in range(self.E_idx):
+                num_measurements = len(cell_measurements[n_idx][e_idx])
+                if num_measurements > 0:
+                    latest_timestamp = self.grid[n_idx][e_idx].latest_timestamp
+                    averagor_value = (timestamp-latest_timestamp)/float(num_measurements)
+                    [self.grid[n_idx][e_idx].add_measurement(averagor_value) for n in range(num_measurements)]
+                    self.grid[n_idx][e_idx].latest_timestamp = timestamp
+        return averagor_values
+
+
+    @classmethod
+    def from_geometric_map(cls, other_map, resolution, averaging_length, t0=0):
+        temporalMap = super(TemporalClutterMap, cls).from_geometric_map(other_map, resolution, averaging_length, TemporalClutterCell)
+        for row in temporalMap.grid:
+            for cell in row:
+                cell.latest_timestamp = t0
+        return temporalMap
 
 def plot_pair_of_clutter_map(true_map, estimated_map, ax_list, im_args, diff_args):
     min_density = 5e-5 #TODO
@@ -328,3 +326,40 @@ def plot_pair_of_clutter_map(true_map, estimated_map, ax_list, im_args, diff_arg
     true_map.plot_density_map(ax_list[0], im_args)
     estimated_map.plot_density_map(ax_list[1], im_args)
     estimated_map.plot_difference(true_map, ax_list[2], diff_args)
+
+def uniform_musicki_map():
+    return GeometricClutterMap(0, 1000, 0, 400, 1e-4)
+
+def nonuniform_musicki_map():
+    true_map = uniform_musicki_map()
+    high_density = 7e-4
+    high_density_region = PolygonRegion(high_density, [(320, 0), (320, 400), (500, 400), (500, 0)])
+    true_map.add_region(high_density_region)
+    return true_map
+
+def custom_map():
+    density_min = 5e-5
+    density_max = 1e-3
+    true_clutter_map = GeometricClutterMap(0, 400, 0, 400, density_min)
+
+    clutter_circle = CircleRegion(density_max, np.array([300, 300]), 50)
+    true_clutter_map.add_region(clutter_circle)
+
+    clutter_box = PolygonRegion(float(density_min+density_max)/2, [(300, 0), (400, 0), (400, 150), (300, 150)])
+    true_clutter_map.add_region(clutter_box)
+
+    n_transients = 5
+    N_start = 100
+    N_end = 200
+    dist_transient = float(N_end-N_start)/n_transients
+    density_resolution = float(density_max-density_min)/n_transients
+    N_points = np.linspace(N_start, N_end-dist_transient, n_transients)
+    E_points = N_points
+    vertices = []
+    densities = np.linspace(density_max-density_resolution, density_min+density_resolution, n_transients)
+    for N, E in zip(N_points, E_points):
+        v = [(N, 0), (N+dist_transient, 0), (0, E+dist_transient), (0, E)]
+        vertices.append(v)
+    [true_clutter_map.add_region(PolygonRegion(dens, v)) for (dens, v) in zip(densities, vertices)]
+    true_clutter_map.add_region(PolygonRegion(density_max, [(0, 0), (N_start, 0), (0, N_start)]))
+    return true_clutter_map

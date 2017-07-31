@@ -269,7 +269,8 @@ class ClassicClutterMap(ClutterMap):
         number_of_measurements = [[0 for _ in self.E_vec] for _ in self.N_vec]
         for measurement in measurements:
             N_idx, E_idx = self.pt2idx(measurement[0], measurement[1])
-            number_of_measurements[N_idx][E_idx] += 1
+            if N_idx > 0 and N_idx < self.N_idx and E_idx > 0 and E_idx < self.E_idx:
+                number_of_measurements[N_idx][E_idx] += 1
         return number_of_measurements
 
     @classmethod

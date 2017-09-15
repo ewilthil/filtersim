@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
-from autopy.conversion import euler_angles_to_matrix
+from autoseapy.conversion import euler_angles_to_matrix
 from filtersim.navigation import gravity_n
 import matplotlib.pyplot as plt
 from ipdb import set_trace

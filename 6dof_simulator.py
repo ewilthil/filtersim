@@ -5,8 +5,8 @@ import visualization as viz
 import tracking as track
 import datetime
 from base_classes import Model, Sensor, ErrorStats, radar_measurement
-from autopy.sylte import load_pkl
-from autopy.conversion import quaternion_to_euler_angles
+from autoseapy.sylte import load_pkl
+from autoseapy.conversion import quaternion_to_euler_angles
 plt.close('all')
 
 N_MC = 1

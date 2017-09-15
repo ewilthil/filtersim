@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
 from matplotlib.widgets import Slider
 import matplotlib.animation as manimation
-from autopy.plotting import get_ellipse
+from autoseapy.plotting import get_ellipse
 import ipdb
 
 default_measurement_args = {

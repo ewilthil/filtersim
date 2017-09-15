@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import autopy.conversion as conv
 from scipy.linalg import block_diag
 from filtersim.common_math import van_loan_discretization, sksym
-import autopy.conversion as conv
+import autoseapy.conversion as conv
 
 ## Define constants
 gravity_n = np.array([0, 0, 9.81])

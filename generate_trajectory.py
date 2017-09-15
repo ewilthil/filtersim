@@ -1,6 +1,6 @@
 import numpy as np
 from base_classes import Model
-from autopy.sylte import dump_pkl
+from autoseapy.sylte import dump_pkl
 import matplotlib.pyplot as plt
 
 dt, Tend = 0.01, 300

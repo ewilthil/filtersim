@@ -4,7 +4,7 @@ from base_classes import Sensor, pitopi, discretize_system
 from scipy.linalg import block_diag, expm
 from scipy.stats import multivariate_normal
 from estimators import KF, EKF
-import autopy.conversion as conv
+import autoseapy.conversion as conv
 
 def polar_to_cartesian(z):
     return np.array([z[0]*np.cos(z[1]), z[0]*np.sin(z[1])])

@@ -98,7 +98,7 @@ class GeometricClutterMap(object):
             while n_region_generated < n_region_measurement:
                 meas_pos = np.random.uniform(low=[region.N_min, region.E_min], high=[region.N_max, region.E_max])
                 if region.point_in_region(meas_pos):
-                    measurements.append(Measurement(meas_pos, timestamp))
+                    measurements.append(Measurement(meas_pos, timestamp, 47*np.identity(2)))
                     n_region_generated += 1
 
         n_base_region_measurements = np.random.poisson(lam=self.base_density*self.area)
@@ -110,7 +110,7 @@ class GeometricClutterMap(object):
                 if region.point_in_region(meas_pos):
                     in_other_cell = True
             if not in_other_cell:
-                measurements.append(Measurement(meas_pos, timestamp))
+                measurements.append(Measurement(meas_pos, timestamp, 47*np.identity(2)))
                 n_base_region_generated += 1
         return measurements
     
@@ -131,7 +131,7 @@ class GeometricClutterMap(object):
         density_grid = dens_vec(N_grid, E_grid)
         cax = ax.pcolormesh(E_grid, N_grid, density_grid, **im_args)
         fig = ax.get_figure()
-        cbar = fig.colorbar(cax, orientation='horizontal',ax=ax)
+        #cbar = fig.colorbar(cax, orientation='horizontal',ax=ax)
         ax.set_aspect('equal')
 
     def plot_with_measurements(self, ax, measurements, im_args = dict()):
@@ -327,6 +327,10 @@ def plot_pair_of_clutter_map(true_map, estimated_map, ax_list, im_args, diff_arg
     true_map.plot_density_map(ax_list[0], im_args)
     estimated_map.plot_density_map(ax_list[1], im_args)
     estimated_map.plot_difference(true_map, ax_list[2], diff_args)
+    [ax.set_xlabel('East') for ax in ax_list]
+    [ax.set_ylabel('North') for ax in ax_list]
+    ax_list[0].set_title('True Clutter Map')
+    ax_list[1].set_title('Estimated Clutter Map')
 
 def uniform_musicki_map():
     return GeometricClutterMap(0, 1000, 0, 400, 1e-4)

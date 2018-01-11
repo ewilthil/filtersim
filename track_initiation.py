@@ -1,5 +1,6 @@
 import numpy as np
 import filtersim.tracking as tracking
+import autoseapy.tracking as autotrack
 from scipy.stats import chi2, multivariate_normal
 from ipdb import set_trace
 
@@ -278,3 +279,7 @@ class Initiator(object):
                     is_taken[z_idx] = True
         self.tentative_tracks = [z for z, idx in enumerate(measurements) if not is_taken[idx]]
         return new_estimates
+
+def run_track_manager(track_manager, measurements_all, time):
+    for measurements, timestamp in zip(measurements_all, time):
+        old_estimates, new_tracks = track_manager.step(measurements, timestamp)

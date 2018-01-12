@@ -27,7 +27,7 @@ F, Q = autotrack.DWNAModel.model(dt, q)
 x0 = np.array([-100, 10, 0, 0])
 radar_range = 150
 P_D = 0.9
-N_MC = 20
+N_MC = 1000
 # Set up track initiation
 gate = autotrack.TrackGate(0.99, v_max)
 clutter_density = 2e-5
@@ -36,7 +36,7 @@ np.random.seed(seed=250190)
 radar = autosim.SquareRadar(radar_range, clutter_density, P_D, R)
 target_model = autotrack.DWNAModel(q)
 PDAF_tracker = autotrack.PDAFTracker(0.9, target_model, gate)
-SPRT = autoinit.SequentialRatioTest(0.01, 0.99, clutter_density, birth_density, v_max, P_D, target_model)
+SPRT = autoinit.SequentialRatioTest(0.01, 0.99, clutter_density, birth_density, gate, P_D, target_model)
 track_termination = autotrack.TrackTerminator(5)
 SPRT_manager = autotrack.Manager(PDAF_tracker, SPRT, track_termination)
 N_total_targets = 0
@@ -71,6 +71,7 @@ RMSE_fig, RMSE_ax = plt.subplots()
 for n_mc in range(N_MC):
     N_true_this = 0
     N_false_this = 0
+    track_detected = False
     SPRT_manager.reset()
     measurements_all = []
     for k, timestamp in enumerate(time):
@@ -78,21 +79,24 @@ for n_mc in range(N_MC):
         for est, measurement in zip(true_target, measurements_target):
             est.measurements = [measurement]
         measurements_clutter = radar.generate_clutter_measurements(timestamp)
-        measurements_all.append(measurements_target+measurements_clutter)
-    filterinit.run_SPRT_manager(SPRT_manager, measurements_all, time)
+        measurements_all.append(measurements_target | measurements_clutter)
+    filterinit.run_track_manager(SPRT_manager, measurements_all, time)
     N_total_targets += 1
     N_total_tracks += len(SPRT_manager.track_file)
     for track in SPRT_manager.track_file.values():
-        time, rmse = get_rmse(true_target, track)
-        RMSE_ax.plot(time, rmse)
+        time_rmse, rmse = get_rmse(true_target, track)
+        RMSE_ax.plot(time_rmse, rmse)
         if is_true_track(true_target, track):
-            N_true_tracks += 1
+            track_detected = True
             N_true_this += 1
         else:
             N_false_tracks += 1
             N_false_this += 1
+    if track_detected:
+        N_true_tracks += 1
     #n_total_targets += len(true_target)
-    if N_false_this > 0 or N_true_this is not 1:
+    if False:#N_false_this > 0 or N_true_this is not 1:
+        print "n_mc={} N_false={}, N_true={}".format(n_mc, N_false_this, N_true_this)
         track_fig, track_ax = autovis.plot_measurements(measurements_all, cmap=Greys)
         #true_target_state = np.array([est.est_posterior for est in true_target])
         track_ax.plot(true_target_state[2,:], true_target_state[0,:], 'k')

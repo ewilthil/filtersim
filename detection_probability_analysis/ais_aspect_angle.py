@@ -65,7 +65,14 @@ def calculate_aspect_angle(estimate, ownship_position):
     est_vel = np.array([estimate.est_posterior[1], estimate.est_posterior[3]])
     pos_vec = ownship_position-est_pos
     cos_angle = pos_vec.dot(est_vel)/(np.linalg.norm(pos_vec)*np.linalg.norm(est_vel))
+    perpendicular_est_vel = np.array([-est_vel[1], est_vel[0]])
+    cos_perp_angle = pos_vec.dot(perpendicular_est_vel)/(np.linalg.norm(pos_vec)*np.linalg.norm(perpendicular_est_vel))
     angle = np.arccos(cos_angle)
+    if cos_perp_angle < 0:
+        angle = -angle
+        print "target view from port side"
+    else:
+        print "target view from starboard side"
     if np.isnan(angle):
         print "ERROR: est_pos={}, est_vel={}, own_pos={}".format(est_pos, est_vel, ownship_position)
     return angle
@@ -85,7 +92,7 @@ def add_zero_sets(measurements_all, measurement_timestamps):
     return measurements_all, measurement_timestamps
 
 def cluster_detections(detections, angles, N_bins=18):
-    angles_half = np.linspace(0, np.pi, N_bins)
+    angles_half = np.linspace(-np.pi, np.pi, N_bins)
     ang_index = np.digitize(angles, angles_half)
     detections_half = np.zeros_like(angles_half)
     tries = np.zeros_like(angles_half)

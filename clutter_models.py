@@ -91,14 +91,14 @@ class GeometricClutterMap(object):
         self.area -= region.area
 
     def generate_clutter(self, timestamp):
-        measurements = []
+        measurements = set()
         for region in self.regions:
             n_region_measurement = np.random.poisson(lam=region.area*region.density)
             n_region_generated = 0
             while n_region_generated < n_region_measurement:
                 meas_pos = np.random.uniform(low=[region.N_min, region.E_min], high=[region.N_max, region.E_max])
                 if region.point_in_region(meas_pos):
-                    measurements.append(Measurement(meas_pos, timestamp, 47*np.identity(2)))
+                    measurements.add(Measurement(meas_pos, timestamp, 47*np.identity(2)))
                     n_region_generated += 1
 
         n_base_region_measurements = np.random.poisson(lam=self.base_density*self.area)
@@ -110,7 +110,7 @@ class GeometricClutterMap(object):
                 if region.point_in_region(meas_pos):
                     in_other_cell = True
             if not in_other_cell:
-                measurements.append(Measurement(meas_pos, timestamp, 47*np.identity(2)))
+                measurements.add(Measurement(meas_pos, timestamp, 47*np.identity(2)))
                 n_base_region_generated += 1
         return measurements
     
@@ -122,7 +122,7 @@ class GeometricClutterMap(object):
                 density = region.density
         return density
 
-    def plot_density_map(self, ax, im_args):
+    def plot_density_map(self, ax, im_args={}):
         #TODO should plot shapes instead of lookup density. Use cmap, vmin and vmax to get the color.
         N_vec = np.linspace(self.N_min, self.N_max, 201)
         E_vec = np.linspace(self.E_min, self.E_max, 201)
@@ -133,38 +133,6 @@ class GeometricClutterMap(object):
         fig = ax.get_figure()
         #cbar = fig.colorbar(cax, orientation='horizontal',ax=ax)
         ax.set_aspect('equal')
-
-    def plot_with_measurements(self, ax, measurements, im_args = dict()):
-        self.plot_density_map(ax, im_args)
-        for z in measurements:
-            ax.plot(z[1], z[0], 'ko')
-
-    def discretize_map(self, resolution):
-        N_vec = np.arange(self.N_min, self.N_max+resolution, resolution)
-        E_vec = np.arange(self.E_min, self.E_max+resolution, resolution)
-        N_grid, E_grid = np.meshgrid(N_vec, E_vec)
-        density_grid = np.vectorize(self.get_density)(N_grid, E_grid)
-        return DiscreteClutterMap(N_grid, E_grid, density_grid)
-
-class DiscreteClutterMap(object):
-    def __init__(self, N_grid, E_grid, density_grid):
-        self.N_grid = N_grid
-        self.E_grid = E_grid
-        self.density_grid = density_grid
-        self.N_min = np.amin(N_grid)
-        self.E_min = np.amin(E_grid)
-        self.resolution = np.amin(np.diff(N_grid))
-
-    def get_density(self, N, E):
-        n_idx, e_idx = self.pt2idx(N, E)
-        return self.density_grid[n_idx, e_idx]
-
-    def pt2idx(self, N, E):
-        N_idx = np.floor(float(N-self.N_min)/self.resolution)
-        E_idx = np.floor(float(E-self.E_min)/self.resolution)
-        return int(N_idx), int(E_idx)
-
-
 
 class ClutterMap(object):
     def __init__(self, N_min, N_max, E_min, E_max, resolution, averaging_length, celltype):
@@ -178,7 +146,7 @@ class ClutterMap(object):
         self.E_idx = len(self.E_vec)
         self.grid = [[celltype(N, E, resolution, averaging_length) for E in self.E_vec] for N in self.N_vec]
 
-    def plot_density_map(self, ax, im_args):
+    def plot_density_map(self, ax, im_args={}):
         N_grid, E_grid = np.meshgrid(self.N_vec, self.E_vec)
         dens_vec = np.vectorize(self.get_density)
         density_grid = dens_vec(N_grid, E_grid)
@@ -240,9 +208,8 @@ class ClutterCell(object):
     def get_density(self):
         return np.mean(self.averagor)
 
-    def add_measurement(self, z):
-        if not np.isnan(z):
-            self.averagor.append(z)
+    def add_measurement(self, measurement):
+            self.averagor.append(measurement)
 
 class ClassicClutterCell(ClutterCell):
     def get_density(self):
@@ -294,7 +261,9 @@ class SpatialClutterMap(ClutterMap):
 
 class TemporalClutterMap(ClutterMap):
     def get_averaging_values(self, measurements):
-        timestamp = measurements[0].timestamp # Assume all have same timestamp
+        z = measurements.pop()
+        timestamp = z.timestamp
+        measurements.add(z)
         cell_measurements = [[[] for _ in self.E_vec] for _ in self.N_vec]
         averagor_values = np.zeros((self.N_idx, self.E_idx))*np.nan
         for measurement in measurements:
@@ -319,7 +288,7 @@ class TemporalClutterMap(ClutterMap):
                 cell.latest_timestamp = t0
         return temporalMap
 
-def plot_pair_of_clutter_map(true_map, estimated_map, ax_list, im_args, diff_args):
+def plot_pair_of_clutter_map(true_map, estimated_map, ax_list, im_args=dict(), diff_args=dict()):
     min_density = 5e-5 #TODO
     max_density = 1e-3 #TODO
     im_args['vmin'] = min_density

@@ -1,285 +1,320 @@
 import numpy as np
-import filtersim.tracking as tracking
 import autoseapy.tracking as autotrack
 from scipy.stats import chi2, multivariate_normal
+import autoseapy.visualization as autovis
 from ipdb import set_trace
+import matplotlib.pyplot as plt
 
-class m_of_n(object):
-    def __init__(self, M, N, max_vel):
-        self.initiators = []
-        self.min_available_track_idx = 1 # 0 is for ownship (in future stuff)
-        self.preliminary_indices = dict()
-        self.max_vel = max_vel
-        self.M = M
-        self.N = N
+def get_rmse(true_track, est_track):
+    timestamps = set([estimate.timestamp for estimate in est_track])
+    partial_true_track = [state for state in true_track if state.timestamp in timestamps]
+    est_states = np.array([est.est_posterior for est in est_track])
+    true_states = np.array([state.est_posterior for state in partial_true_track])
+    x_pos_err = true_states[:,0]-est_states[:,0]
+    y_pos_err = true_states[:,2]-est_states[:,2]
+    pos_rmse = np.sqrt(x_pos_err**2+y_pos_err**2)
+    return [est.timestamp for est in est_track], pos_rmse
 
-    def __repr__(self):
-        pass
+def is_true_track(true_track, est_track):
+    _, pos_rmse = get_rmse(true_track, est_track)
+    return np.all(pos_rmse < 20)
 
-    def form_new_tracks(self, measurements):
-        new_initiators = []
-        new_estimates = []
-        logged_estimates = [] # The first time step
-        for measurement in measurements:
-            associated = False
-            for init in self.initiators:
-                dt = measurement.timestamp-init.timestamp
-                vel = (measurement.value-init.value)/(1.*dt)
-                if np.linalg.norm(vel) < self.max_vel:
-                    associated = True
-                    est_1, est_2 = tracking.Estimate.from_measurement(init, measurement)
-                    est_1.track_index = self.min_available_track_idx
-                    est_2.track_index = self.min_available_track_idx
-                    self.min_available_track_idx += 1
-                    new_estimates.append(est_2)
-                    logged_estimates.append(est_1)
-            if not associated:
-                new_initiators.append(measurement)
-        self.initiators = new_initiators
-        return new_estimates, logged_estimates
-                    
-
-    def update_track_status(self, current_preliminary_estimates):
-        confirmed_estimates = []
-        preliminary_estimates = []
-        for est in current_preliminary_estimates:
-            if est.track_index not in self.preliminary_indices.keys():
-                self.preliminary_indices[est.track_index] = (0,0)
-                preliminary_estimates.append(est)
-            else:
-                m, n = self.preliminary_indices[est.track_index]
-                n += 1
-                if len(est.measurements) > 0:
-                    m += 1
-                if m < self.M and n < self.N:
-                    preliminary_estimates.append(est)
-                elif m >= self.M and n <= self.N:
-                    confirmed_estimates.append(est)
-                self.preliminary_indices[est.track_index] = (m, n)
-        return confirmed_estimates, preliminary_estimates
-
-    def fuse_tracks(self, estimate_list):
-        new_estimates = []
-        while len(estimate_list) > 0:
-            est_under_test = estimate_list.pop(0)
-            for est_idx in range(1, len(estimate_list))[::-1]: # Reverse to not mess with iterator
-                if est_under_test.merge_test(estimate_list[est_idx], 0.99):
-                    est_under_test = tracking.merge_estimates(est_under_test, estimate_list[est_idx])
-                    estimate_list.pop(est_idx)
-            new_estimates.append(est_under_test)
-        return new_estimates
-
-    def offline_processing(self, measurements_all, timestamps, posterior_method, target_model, termination_steps=np.inf):
-        confirmed_estimates = []
-        preliminary_estimates = []
-        all_estimates = dict()
-        termination_dict = dict()
-        for measurements, t in zip(measurements_all, timestamps):
-            # Step old estimates
-            confirmed_estimates = [tracking.Estimate.from_estimate(t, est, target_model, np.zeros(2))for est in confirmed_estimates]
-            preliminary_estimates = [tracking.Estimate.from_estimate(t, est, target_model, np.zeros(2)) for est in preliminary_estimates]
-            used_measurements = [False for _ in measurements]
-            # Gate confirmed targets
-            for est in confirmed_estimates:
-                is_gated = posterior_method.gate_measurements(measurements, est)
-                used_measurements = [new or old for (new, old) in zip(used_measurements, is_gated)]
-            measurements = [m for (m, v) in zip(measurements, used_measurements) if not v]
-            # Gate preliminary targets
-            for est in preliminary_estimates:
-                is_gated = posterior_method.gate_measurements(measurements, est)
-                used_measurements = [new or old for (new, old) in zip(used_measurements, is_gated)]
-            measurements = [m for (m, v) in zip(measurements, used_measurements) if not v]
-            # Measurement update using the associated measurements
-            [posterior_method.calculate_posterior(estimate) for estimate in confirmed_estimates+preliminary_estimates]
-            # Perform track initiation and update pre/conf list
-            new_preliminary_estimates, logged_estimates = self.form_new_tracks(measurements)
-            preliminary_estimates += new_preliminary_estimates
-            new_confirmed_estimates, preliminary_estimates = self.update_track_status(preliminary_estimates)
-            confirmed_estimates += new_confirmed_estimates
-            for est in confirmed_estimates:
-                track_idx = est.track_index
-                if track_idx not in all_estimates.keys():
-                    all_estimates[track_idx] = []
-                all_estimates[track_idx].append((est, 'CONFIRMED'))
-            for est in logged_estimates+preliminary_estimates:
-                track_idx = est.track_index
-                if track_idx not in all_estimates.keys():
-                    all_estimates[track_idx] = []
-                all_estimates[track_idx].append((est, 'PRELIMINARY'))
-            # Termination
-            surviving_confirmed_estimates = []
-            for est in confirmed_estimates:
-                track_idx = est.track_index
-                if track_idx not in termination_dict.keys():
-                    termination_dict[track_idx] = 0
-                if len(est.measurements) == 0:
-                    termination_dict[track_idx] += 1
-                else:
-                    termination_dict[track_idx] = 0
-                if termination_dict[track_idx] > termination_steps:
-                    pass
-                else:
-                    surviving_confirmed_estimates.append(est)
-            confirmed_estimates = surviving_confirmed_estimates
-            # Fusion
-            confirmed_estimates = self.fuse_tracks(confirmed_estimates)
-            preliminary_estimates = self.fuse_tracks(preliminary_estimates)
-        return all_estimates
-
-
-class IntegratedPDA(object):
-    def __init__(self, P_D, P_G, p0, max_vel=20):
-        self.p0 = p0
-        self.P_D = P_D
-        self.P_G = P_G
-        self.gamma = chi2(df=2).ppf(self.P_G)
-        self.p_c = 1
-        self.p_b = 0.1
-        self.max_vel = max_vel
-
-    def __repr__(self):
-        pass
-
-    def step(self, estimate):
-        pass
-
-    def offline_processing(self, measurements_all, timestamps, target_model):
-        estimates = []
-        probabilities = []
-        current_estimate = None
-        existence_probability = 0
-        for measurements, t in zip(measurements_all, timestamps):
-            m_k = len(measurements)
-            # First handle no measurements
-            if m_k == 0:
-                if current_estimate is not None: # Do a step with no measurements
-                    current_estimate = tracking.Estimate.from_estimate(t, current_estimate, target_model, np.zeros(2))
-                    existence_probability = self.p_c*existence_probability+p_b*(1-existence_probability)
-                    current_estimate.est_posterior = current_estimate.est_prior
-                    current_estimate.cov_posterior = current_estimate.cov_posterior
-                    delta = self.P_D*self.P_G
-                    existence_probability = (1-delta)*existence_probability/float(1-delta*existence_probability)
-                else: # No measurements, no prior estimate: Do nothing
-                    pass
-            else: # There are measurements
-                if current_estimate is None:
-                    current_estimate, existence_probability = self.setup_estimate(measurements, t)
-                else: #This is the normal IPDA step
-                    is_gated = tracking.gate_measurements(measurements, current_estimate, self.P_G)
-                    measurements = [measurement for (measurement, inside) in zip(measurements, is_gated) if inside]
-                    current_estimate, existence_probability = self.calculate_posterior(current_estimate, measurements, existence_probability, target_model, t)
-            if current_estimate is not None:
-                estimates.append(current_estimate)
-                probabilities.append(existence_probability)
-        return estimates, probabilities
-
-    def calculate_posterior(self, estimate, measurements, existence_probability, target_model, timestamp):
-        # Time step
-        estimate = tracking.Estimate.from_estimate(timestamp, estimate, target_model, np.zeros(2))
-        existence_probability = self.p_c*existence_probability+self.p_b*(1-existence_probability)
-        m_k = len(measurements)
-        if m_k > 0:
-            H = measurements[0].measurement_matrix
-            R = measurements[0].covariance
-            z_hat = H.dot(estimate.est_prior)
-            S = H.dot(estimate.cov_prior).dot(H.T)+R
-            V_k = np.pi*np.sqrt(self.gamma*np.linalg.det(S))
-            gain = np.dot(estimate.cov_prior, np.dot(H.T, np.linalg.inv(S)))
-            delta = self.P_G*self.P_D
-            likelihoods = np.zeros(m_k)
-            innovations = np.zeros((2, m_k))
-            for idx, z in enumerate(measurements):
-                innovations[:, idx] = z.value-z_hat
-                likelihoods[idx] = multivariate_normal.pdf(innovations[:, idx], np.zeros(2), S)
-                delta -= self.P_D*self.P_G*likelihoods[idx]*V_k/float(m_k)
-            existence_probability = (1-delta)*existence_probability/(1-delta*existence_probability)
-            betas = np.zeros(m_k+1)
-            for idx, z in enumerate(measurements):
-                betas[idx] = self.P_D*self.P_G*V_k*likelihoods[idx]/(m_k*(1-delta))
-            betas[-1] = (1-self.P_D*self.P_G)/(1-delta)
-            betas /= np.sum(betas)
-            tracking.PDA_update(estimate, measurements, betas)
-        else:
-            tracking.DR_update(estimate)
-
-        return estimate, existence_probability
-            
-    def setup_estimate(self, measurements, timestamp):
-        n_z = len(measurements)
-        z = np.zeros((2, n_z))
-        for idx, meas in enumerate(measurements):
-            z[:, idx] = meas.value
-        sample_mean = np.mean(z, axis=1)
-        sample_cov = np.zeros((2,2))
-        for idx in range(n_z):
-            diff = z[:, idx]-sample_mean
-            diff_vec = diff.reshape((2,1))
-            sample_cov += diff_vec.dot(diff_vec.T)
-        sample_cov = 1./(n_z-1)*sample_cov
-        mean = np.array([sample_mean[0], 0, sample_mean[1], 0])
-        cov = np.zeros((4,4))
-        cov[0, 0] = sample_cov[0, 0]
-        cov[0, 2] = sample_cov[0, 1]
-        cov[2, 0] = sample_cov[0, 1]
-        cov[2, 2] = sample_cov[1, 1]
-        cov[1, 1] = self.max_vel**2
-        cov[3, 3] = self.max_vel**2
-        estimate = tracking.Estimate(timestamp, mean, cov, is_posterior=True, track_index=1)
-        existence_probability = self.p0
-        return estimate, existence_probability
-
-class SequentialTrackExtraction(object):
-    def __init__(self, P0=0.01, P1=0.99):
-        # P1: P(Accept H1 | H1)
-        # P0: P(Accept H1 | H0)
-        self.lower_bound = (1-P1)/(1-P0)
-        self.upper_bound = P1/P0
-
-    def __repr__(self):
-        pass
-
-    def offline_processing(self, measurements_all, timestamps, target_model, windowsize=None):
-        from filtersim.common_math import Node
-        if windowsize is None:
-            windowsize=len(measurements_all)
-        measurements_all = measurements_all[:windowsize]
-        # Construct the tree
-        Tree = Node('root')
-        for measurements in measurements_all:
-            new_leafnodes = []
-            for leafnode in leafnodes:
-                for measurement in measurements:
-                    new_node = Node(measurement, parent=leafnode)
-                    leafnode.add_child(new_node)
-                    new_leafnodes.append(new_node)
-
-    def extract_measurement_set(self, measurements_all, indices):
-        selected_measurements = []
-        for measurements, index in zip(measurements_all, indices):
-            selected_measurements.append(measurements[index])
-        return selected_measurements
-
-class Initiator(object):
-    def __init__(self, v_max=np.inf):
-        self.tentative_tracks = []
-        self.v_max = v_max
-
-    def __repr__(self):
-        pass
-
-    def step(self, measurements):
-        new_estimates = []
-        is_taken = [False for _ in measurements]
-        for initiator in self.tentative_tracks:
-            for z_idx, new_measurement in enumerate(measurements):
-                estimates = tracking.Estimate.from_measurement(initiator, measurement)
-                current_state = estimates[1].est_posterior
-                if np.sqrt(current_state[1]**2+current_state[3]**2) < self.v_max:
-                    new_estimates.append(estimates)
-                    is_taken[z_idx] = True
-        self.tentative_tracks = [z for z, idx in enumerate(measurements) if not is_taken[idx]]
-        return new_estimates
-
-def run_track_manager(track_manager, measurements_all, time):
+def run_track_manager(track_manager, measurements_all, time, true_target):
+    N_true_tracks = 0
+    N_false_tracks = 0
+    N_total_targets = 1
+    new_track_timestamps = dict()
+    new_tracks_all = dict()
     for measurements, timestamp in zip(measurements_all, time):
         old_estimates, new_tracks = track_manager.step(measurements, timestamp)
+        for track in new_tracks:
+            idx = track[0].track_index
+            new_track_timestamps[idx] = track[-1].timestamp-track[0].timestamp
+            new_tracks_all[idx] = track
+    time_rmse_all = []
+    rmse_all = []
+    true_init_time_all = []
+    false_init_time_all = []
+    track_detected = False
+    for track in new_tracks_all.values():
+        time_rmse, rmse = get_rmse(true_target, track)
+        time_rmse_all.append(time_rmse)
+        rmse_all.append(rmse)
+        if is_true_track(true_target, track):
+            if not track_detected:
+                N_true_tracks += 1
+                #track_detected = True
+                true_init_time_all.append(new_track_timestamps[track[0].track_index])
+        else:
+            N_false_tracks += 1
+            false_init_time_all.append(new_track_timestamps[track[0].track_index])
+    return N_true_tracks, N_false_tracks, N_total_targets, time_rmse_all, rmse_all, true_init_time_all, false_init_time_all
+
+class MCTrackInit(object):
+    def __init__(self, manager, true_track, name):
+        self.manager = manager
+        self.true_track = true_track
+        self.timestamps = np.array([track.timestamp for track in true_track])
+        self.stats = {'N_targets' : 0, 'N_tracks' : 0, 'N_true_tracks' : 0, 'N_false_tracks' : 0}
+        self.rmse_all = []
+        self.time_rmse_all = []
+        self.true_init_time_all = []
+        self.false_init_time_all = []
+        self.name = name
+
+    def step(self, measurements_all):
+        self.manager.reset()
+        N_current_true_tracks, N_current_false_tracks, N_current_targets, time_rmse, rmse, true_init_time, false_init_time = run_track_manager(self.manager, measurements_all, self.timestamps, self.true_track)
+        self.update_stats(N_current_true_tracks, N_current_false_tracks, N_current_targets)
+        self.rmse_all.append(rmse)
+        self.time_rmse_all.append(time_rmse)
+        self.true_init_time_all.append(true_init_time)
+        self.false_init_time_all.append(false_init_time)
+
+    def plot_rmse(self, rmse_ax):
+        for rmse_list, time_list in zip(self.rmse_all, self.time_rmse_all):
+            for rmse, time in zip(rmse_list, time_list):
+                rmse_ax.plot(time, rmse)
+
+    def update_stats(self, N_current_true, N_current_false, N_current_targets):
+        self.stats['N_targets'] += N_current_targets
+        self.stats['N_tracks'] += (N_current_true+N_current_false)
+        self.stats['N_true_tracks'] += np.min((N_current_true, 1))
+        self.stats['N_false_tracks'] += N_current_false
+    
+    def get_stats(self):
+        P_DT = float(self.stats['N_true_tracks'])/self.stats['N_targets']
+        if self.stats['N_tracks'] > 0:
+            P_FT = float(self.stats['N_false_tracks'])/self.stats['N_tracks']
+        else:
+            P_FT = 0.0
+        return P_DT, P_FT
+
+    def get_time_info(self):
+        n_scans_true = []
+        n_scans_false = []
+        for true_init_times in self.true_init_time_all:
+            if len(true_init_times) > 0:
+                n_scans_true.append(true_init_times[0])
+        for false_init_times in self.false_init_time_all:
+            for init_time in false_init_times:
+                n_scans_false.append(init_time)
+        return n_scans_true, n_scans_false
+        
+
+    def print_stats(self):
+        P_DT, P_FT = self.get_stats()
+        print "{} P_DT={}".format(self.name, P_DT)
+        print "{} P_FT={}".format(self.name, P_FT)
+
+class MCManager(object):
+    def __init__(self, dep_var_name, N_MC):
+        self.manager = None
+        self.N_MC = N_MC
+        self.dep_var_name = dep_var_name
+        self.dependent_variables = []
+        self.prob_detect_track = []
+        self.prob_false_track = []
+        self.average_true_init_time = []
+        self.average_false_init_time = []
+    
+    def update_stats(self, dependent_variable):
+        self.dependent_variables.append(dependent_variable)
+        P_DT, P_FT = self.manager.get_stats()
+        self.prob_detect_track.append(P_DT)
+        self.prob_false_track.append(P_FT)
+        n_scans_true, n_scans_false = self.manager.get_time_info()
+        self.average_true_init_time.append(np.mean(n_scans_true))
+        self.average_false_init_time.append(np.mean(n_scans_false))
+
+    def update_manager(self, manager):
+        self.manager = manager
+    
+    def plot_pft_pdt(self):
+        pft_sorted = []
+        pdt_sorted = []
+        pft_sort, pdt_sort = zip(*sorted(zip(self.prob_false_track, self.prob_detect_track)))
+        for pdt, pft in zip(pdt_sort, pft_sort):
+            if pdt > 0 and pft > 0:
+                pft_sorted.append(pft)
+                pdt_sorted.append(pdt)
+        fig, ax = plt.subplots()
+        ax.semilogx(pft_sorted, pdt_sorted)
+        ax.set_xlabel('$P_{FT}$')
+        ax.set_ylabel('$P_{DT}$')
+        return fig, ax
+
+    def plot_pft_pdt_dep_var(self):
+        fig, ax = plt.subplots(nrows=2)
+        dt_ax = ax[0]
+        ft_ax = ax[1]
+        dt_ax.semilogx(np.array(self.dependent_variables), self.prob_detect_track)
+        dt_ax.set_ylabel('$P_{DT}$')
+        dt_ax.set_xlabel(self.dep_var_name)
+        ft_ax.semilogx(np.array(self.dependent_variables), self.prob_false_track)
+        ft_ax.set_xlabel(self.dep_var_name)
+        ft_ax.set_ylabel('$P_{FT}$')
+        return fig, ax
+
+    def plot_init_time(self):
+        fig, ax = plt.subplots(nrows=2)
+        true_ax = ax[0]
+        false_ax = ax[1]
+        true_ax.semilogx(dep, true_t)
+        true_ax.set_xlabel(r'$\beta$')
+        true_ax.set_ylabel('$T_{DT}$')
+        false_ax.semilogx(dep, false_t)
+        false_ax.set_xlabel(r'$\beta$')
+        false_ax.set_ylabel('$T_{FT}$')
+        return fig, ax
+
+class TrackInitMonteCarlo(object):
+    # Features: true_target_state is only one target for now.
+    def __init__(self, true_target_state, track_manager, measurement_model, N_MC):
+        self.true_target_state = true_target_state
+        self.track_manager = track_manager
+        self.measurement_model = measurement_model
+        self.N_MC = N_MC
+        self.n_targets = 1 # TODO
+        self.all_true_tracks = 0
+        self.all_false_tracks = 0
+        self.all_targets = 0
+
+    def step(self):
+        for n in range(self.N_MC):
+            current_true_tracks = 0
+            current_false_tracks = 0
+            self.track_manager.reset()
+            true_target_state = self.true_target_state.get_state()
+            time = self.true_target_state.get_time()
+            measurements_all = []
+            new_tracks_all = dict()
+            for state in true_target_state:
+                true_pos = np.array([state.est_posterior[0], state.est_posterior[2]])
+                measurements = self.measurement_model.generate_measurements([true_pos], state.timestamp)
+                measurements_all.append(measurements)
+                _, new_tracks = self.track_manager.step(measurements, state.timestamp)
+                for tracks in new_tracks:
+                    new_tracks_all[tracks[0].track_index] = tracks
+            found_true_track = False
+            for track_idx, track in new_tracks_all.items():
+                if not found_true_track and is_true_track(true_target_state, track):
+                    current_true_tracks += 1
+                    found_true_track = True
+                else:
+                    current_false_tracks += 1
+            # Update statistics
+            self.all_true_tracks += current_true_tracks
+            self.all_false_tracks += current_false_tracks
+            self.all_targets += 1
+        return self.get_pdt_pft()
+
+    def get_pdt_pft(self):
+        pdt =  np.float(self.all_true_tracks)/self.all_targets
+        pft = np.float(self.all_false_tracks)/(self.all_true_tracks+self.all_false_tracks)
+        return pdt, pft
+
+class TrackInitVariableParameters(object):
+    def __init__(self, true_target_state, measurement_model, N_MC):
+        self.true_target_state = true_target_state
+        self.measurement_model = measurement_model
+        self.N_MC = N_MC
+        self.dependent_variables = []
+        self.pdt = []
+        self.pft = []
+
+    def step(self, dep_var, manager):
+        self.dependent_variables.append(dep_var)
+        monte_carlo = TrackInitMonteCarlo(self.true_target_state, manager, self.measurement_model, self.N_MC)
+        pdt, pft = monte_carlo.step()
+        self.pdt.append(pdt)
+        self.pft.append(pft)
+
+    def plot_pdt_pft(self, pdt_ax, pft_ax):
+        pdt_ax.semilogx(self.dependent_variables, self.pdt)
+        pft_ax.semilogx(self.dependent_variables, self.pft)
+
+    def plot_soc(self, soc_ax):
+        soc_ax.semilogx(self.pft, self.pdt)
+
+class ClusterAnalysis(object):
+    def __init__(self):
+        self.n_confirmed_clusters = 0
+        self.n_H1_true = 0
+        self.n_data_association_true = 0
+        self.n_data_association_true_wo_misdtections = 0
+        self.current_track_index = 1
+        self.clusters = dict()
+        self.cluster_H1_true = dict()
+        self.cluster_correct_data_association = dict()
+
+    def test_clusters(self, confirmed_clusters, terminated_clusters, true_target):
+        for cluster in confirmed_clusters:
+            self.clusters[self.current_track_index] = cluster
+            self.n_confirmed_clusters += 1
+            # The grand question is wether this should use cluster.root_measurements or cluster.measurements_all. According to VK, it should use the former
+            if self.H1_true(cluster.root_measurements, true_target.measurements):
+                self.cluster_H1_true[self.current_track_index] = True
+                self.n_H1_true += 1
+                cluster_track = cluster.get_track()
+                track_measurements = set()
+                for t in cluster_track:
+                    [track_measurements.add(z) for z in t.measurements]
+                if self.data_association_true(track_measurements, true_target.measurements):
+                    self.n_data_association_true += 1
+                if self.data_association_true_wo_misdetections(track_measurements, true_target.measurements):
+                    self.n_data_association_true_wo_misdtections += 1
+            else:
+                self.cluster_H1_true[self.current_track_index] = False
+            self.current_track_index += 1
+
+    def H1_true(self, cluster_measurements, target_measurements):
+        return len(cluster_measurements.intersection(target_measurements)) > 0
+
+    def data_association_true(self, track_measurements, target_measurements):
+        return track_measurements.issubset(target_measurements)
+
+    def data_association_true_wo_misdetections(self, track_measurements, target_measurements):
+        unmatched_measurements = track_measurements-target_measurements
+        target_as_list = list(target_measurements)
+        only_misdetections = True
+        for measurement in unmatched_measurements:
+            t = measurement.timestamp
+            for z in target_as_list:
+                if z.timestamp == t:
+                    only_misdetections = z.is_zero_measurement()
+        return only_misdetections
+
+    def plot_clusters_with_track_init_hyp(self, ax):
+        H1_true_tracks = dict()
+        H0_true_tracks = dict()
+        for cluster_id, cluster in self.clusters.items():
+            track = cluster.get_track()
+            measurements = cluster.get_measurements()
+            color = 'g' if self.cluster_H1_true[cluster_id] else 'r'
+            ms = 12 if self.cluster_H1_true[cluster_id] else 14
+            for z in measurements:
+                ax.plot(z.value[1], z.value[0], 'o', markeredgecolor=color,markerfacecolor='none', markersize=ms)
+                ax.text(z.value[1], z.value[0], str(z.timestamp))
+            if self.cluster_H1_true[cluster_id]:
+                H1_true_tracks[cluster_id] = track
+            else:
+                H0_true_tracks[cluster_id] = track
+        autovis.plot_track_pos(H1_true_tracks, ax, color='g')
+        autovis.plot_track_pos(H0_true_tracks, ax, color='r')
+        ax.set_xlim(-500, 500)
+        ax.set_ylim(-500, 500)
+        ax.set_aspect('equal')
+
+    def print_stats(self):
+        print "P(accept H1|H1 true)={}".format(self.frac2per(self.n_H1_true, self.n_confirmed_clusters))
+        print "P(accept H1|H0 true)={}".format(self.frac2per(self.n_confirmed_clusters-self.n_H1_true, self.n_confirmed_clusters))
+        print "P(correct Omega|H1 true and accepted)={}".format(self.frac2per(self.n_data_association_true, self.n_H1_true))
+        print "P(correct Omega, except misdetections|H1 true and accepted)={}".format(self.frac2per(self.n_data_association_true_wo_misdtections, self.n_H1_true))
+
+    @staticmethod
+    def frac2per(num, denom):
+        if denom == 0:
+            denom = 1
+            num = 0
+        return float(num)/denom

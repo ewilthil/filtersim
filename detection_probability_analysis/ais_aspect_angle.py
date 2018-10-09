@@ -48,7 +48,8 @@ def is_detected(est_list, measurements_all, measurement_timestamps, ownship_pose
         measurement_model.update_ownship(current_position)
         current_ais_estimate = est_list[k_est]
         current_ais_velocity = np.array([current_ais_estimate.est_posterior[1], current_ais_estimate.est_posterior[3]])
-        if np.linalg.norm(current_ais_velocity) < 0.1:
+        current_ais_position = np.array([current_ais_estimate.est_posterior[0], current_ais_estimate.est_posterior[2]])
+        if np.linalg.norm(current_ais_velocity) < 1 or np.linalg.norm(current_ais_position-current_position) > 1800:
             continue
         gated_measurements = gate.gate_estimate(current_ais_estimate, measurements, measurement_model)
         detection_indicator.append(1) if len(gated_measurements) > 0 else detection_indicator.append(0)
@@ -138,7 +139,7 @@ def cluster_detections(detections, angles, N_bins, symmetrize=False):
 
 if __name__ == '__main__':
     chosen_rosbag = '/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_11_2018-09-25-14-06-12.bag'
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_2*.bag')
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/2[57]-09-2018/filtered_bags/filtered_scenario*.bag')
     #plot_sample_time_cdf(all_files)
     gate_probability = 0.99
     maximum_velocity = 15
@@ -151,12 +152,13 @@ if __name__ == '__main__':
     detections_all = []
     aspect_angle_all = []
     for chosen_rosbag in all_files:
-        detections, angle = detect_based_on_ais(chosen_rosbag, measurement_model, track_gate, [autoais.known_mmsi['KSX_OSD1']])
+        detections, angle = detect_based_on_ais(chosen_rosbag, measurement_model, track_gate, [autoais.known_mmsi['MUNKHOLMEN II']])
         #detections, angle = detect_based_on_radar(chosen_rosbag, measurement_model, track_gate)
         print "processed {}".format(chosen_rosbag)
         detections_all += detections
         aspect_angle_all += angle
     N_bins=36
+    sym_fname = {True : "symmetric", False : "non_symmetric"}
     for symmetrize in [True, False]:
         plt.figure()
         angles, P_D, num_measurements = cluster_detections(detections_all, aspect_angle_all, N_bins=N_bins, symmetrize=symmetrize)
@@ -164,9 +166,15 @@ if __name__ == '__main__':
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
         ax.plot(angles, P_D, 'r')
+        ax.set_ylim(0, 1)
+        ax.set_title('Detection probability')
+        plt.savefig("munkholmen_{}_PD.pdf".format(sym_fname[symmetrize]))
         plt.figure()
         ax = plt.subplot(projection='polar')
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
-        ax.bar(angles, num_measurements, width=np.pi/(N_bins-1))
+        bar_width = (2*np.pi)/N_bins
+        ax.bar(angles-bar_width/2., num_measurements, width=bar_width)
+        ax.set_title('Number of samples')
+        plt.savefig("munkholmen_{}_num.pdf".format(sym_fname[symmetrize]))
     plt.show()

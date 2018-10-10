@@ -228,7 +228,10 @@ if __name__ == '__main__':
     munkholmen_data = ais_detection_data[autoais.known_mmsi['MUNKHOLMEN II']]
     drone_data = ais_detection_data[autoais.known_mmsi['KSX_OSD1']]
     for data in [munkholmen_data, drone_data, radar_detection_data]:
-        ax = plt.subplot(projection='polar')
+        fig, ax = plt.subplots(subplot_kw={'projection' : 'polar'})
         angles, P_D, tries = cluster_detections_angle(data['detections'], data['aspect_angle'], 36, True)
         plot_angular_detections(ax, angles, P_D)
+        target_range, P_D, tries = cluster_detections_range(data['detections'], data['target_range'], 36)
+        fig, ax = plt.subplots()
+        plot_range_detections(ax, target_range, P_D)
     plt.show()

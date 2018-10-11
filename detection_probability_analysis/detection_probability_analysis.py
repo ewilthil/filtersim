@@ -6,22 +6,28 @@ import autoseapy.bag_operations as autobag
 import autoseapy.tracking_common as autocommon
 import autoseapy.ais as autoais
 
+RADAR_KEY = 'radar'
+munkholmen_mmsi = autoais.known_mmsi['MUNKHOLMEN II']
+drone_mmsi = autoais.known_mmsi['KSX_OSD1']
+
 class DataStructure(object):
-    def __init__(self, radar, ais, measurements, measurement_timestamps, ownship_pose, ownship_vel):
+    def __init__(self, radar, ais, measurements, measurement_timestamps, ownship_pose, ownship_vel, fname):
         self.radar = radar
         self.ais = ais
         self.measurements = measurements
         self.measurement_timestamps = measurement_timestamps
         self.ownship_pose = ownship_pose
         self.ownship_vel = ownship_vel
+        self.fname = fname
 
 def load_data(rosbags):
     data_out = []
     for rosbag in rosbags:
         radar, ais, measurements, measurement_timestamps = autobag.bag2tracking_data(rosbag, return_timestamps=True)
         measurements, measurement_timestamps = add_zero_sets(measurements, measurement_timestamps)
-        ownship_pose, ownship_twist = autobag.bag2navigation_data(rosbag, measurement_timestamps)
-        data_out.append(DataStructure(radar, ais, measurements, measurement_timestamps, ownship_pose, ownship_twist))
+        ownship_pose, ownship_vel = autobag.bag2navigation_data(rosbag, measurement_timestamps)
+        data_out.append(DataStructure(radar, ais, measurements, measurement_timestamps, ownship_pose, ownship_vel, rosbag))
+        print "loaded bag {}".format(rosbag)
     return data_out
 
 def add_zero_sets(measurements_all, measurement_timestamps):
@@ -43,12 +49,14 @@ def filter_data(datasets, chosen_mmsi):
         filtered_ais = {mmsi : dataset.ais[mmsi] for mmsi in chosen_mmsi if mmsi in dataset.ais.keys()}
         dataset.ais = filtered_ais
 
-def calculate_detection_statistics(datasets, measurement_model, track_gate, velocity_threshold=1):
-    ais_statistics = dict()
-    radar_statistics = dict(detections=[], aspect_angle=[], target_range=[])
+def calculate_detection_statistics(datasets, measurement_model, track_gate, velocity_threshold):
     for dataset in datasets:
+        dataset.detections = dict()
+        dataset.aspect_angle = dict()
+        dataset.target_range = dict()
+        dataset.valid_timestamp_idx = dict()
         for mmsi, ais_track in dataset.ais.items():
-            detection_indicator, aspect_angle, target_range = is_detected(
+            detection_indicator, aspect_angle, target_range, timestamp_idx = is_detected(
                     ais_track,
                     dataset.measurements,
                     dataset.measurement_timestamps,
@@ -56,13 +64,15 @@ def calculate_detection_statistics(datasets, measurement_model, track_gate, velo
                     measurement_model,
                     track_gate,
                     velocity_threshold)
-            if mmsi not in ais_statistics.keys():
-                ais_statistics[mmsi] = dict(detections=[], aspect_angle=[], target_range=[])
-            ais_statistics[mmsi]['detections'] += [detection_indicator]
-            ais_statistics[mmsi]['aspect_angle'] += [aspect_angle]
-            ais_statistics[mmsi]['target_range'] += [target_range]
+            dataset.detections[mmsi] = detection_indicator
+            dataset.aspect_angle[mmsi] = aspect_angle
+            dataset.target_range[mmsi] = target_range
+            dataset.valid_timestamp_idx[mmsi] = timestamp_idx
+        dataset.detections[RADAR_KEY] = []
+        dataset.aspect_angle[RADAR_KEY] = []
+        dataset.target_range[RADAR_KEY] = []
         for track_id, radar_track in dataset.radar.items():
-            detection_indicator, aspect_angle, target_range = is_detected(
+            detection_indicator, aspect_angle, target_range, _ = is_detected(
                     radar_track,
                     dataset.measurements,
                     dataset.measurement_timestamps,
@@ -70,16 +80,16 @@ def calculate_detection_statistics(datasets, measurement_model, track_gate, velo
                     measurement_model,
                     track_gate,
                     velocity_threshold)
-            radar_statistics['detections'] += [detection_indicator]
-            radar_statistics['aspect_angle'] += [aspect_angle]
-            radar_statistics['target_range'] += [target_range]
-    return radar_statistics, ais_statistics
+            dataset.detections[RADAR_KEY] += detection_indicator
+            dataset.aspect_angle[RADAR_KEY] += aspect_angle
+            dataset.target_range[RADAR_KEY] += target_range
 
 def is_detected(est_list, measurements_all, measurement_timestamps, ownship_pose, measurement_model, gate, velocity_threshold):
     # Assumes measurements have been synced with est_list
     detection_indicator = []
     aspect_angle = []
     target_range = []
+    timestamp_idx = []
     estimate_timestamps = [est.timestamp for est in est_list if est.timestamp >= np.min(measurement_timestamps) and est.timestamp <= np.max(measurement_timestamps)]
     est_alive_indexes = np.digitize(estimate_timestamps, measurement_timestamps, right=True)
     for k_est, k in enumerate(est_alive_indexes):#, measurements in enumerate(measurements_all):
@@ -92,11 +102,12 @@ def is_detected(est_list, measurements_all, measurement_timestamps, ownship_pose
         current_target_range = np.linalg.norm(current_ais_position-current_position)
         if np.linalg.norm(current_ais_velocity) < velocity_threshold or current_target_range > 1800:
             continue
+        timestamp_idx.append(k)
         gated_measurements = gate.gate_estimate(current_ais_estimate, measurements, measurement_model)
         detection_indicator.append(1) if len(gated_measurements) > 0 else detection_indicator.append(0)
         aspect_angle.append(calculate_aspect_angle(current_ais_estimate, current_position))
         target_range.append(current_target_range)
-    return detection_indicator, aspect_angle, target_range
+    return detection_indicator, aspect_angle, target_range, timestamp_idx
 
 def calculate_aspect_angle(estimate, ownship_position):
     est_pos = np.array([estimate.est_posterior[0], estimate.est_posterior[2]])
@@ -112,9 +123,11 @@ def calculate_aspect_angle(estimate, ownship_position):
         print "ERROR: est_pos={}, est_vel={}, own_pos={}".format(est_pos, est_vel, ownship_position)
     return angle
 
-def cluster_detections_angle(detections_all, angles_all, N_bins, symmetrize=False):
-    detections = [detection for det_list in detections_all for detection in det_list]
-    angles = [angle for ang_list in angles_all for angle in ang_list]
+def cluster_detections_angle(datasets, mmsi, N_bins, symmetrize=False):
+    detections, angles = [], []
+    for dataset in datasets:
+        detections += dataset.detections[mmsi]
+        angles += dataset.aspect_angle[mmsi]
     new_angles = np.linspace(-np.pi, np.pi, N_bins)
     ang_index = np.digitize(angles, new_angles)
     new_detections = np.zeros_like(new_angles)
@@ -159,20 +172,18 @@ def cluster_detections_range(detections_all, target_range_all, N_bins):
             P_D[k] = 0
     return new_target_range, P_D, tries
 
-def cluster_detections_temporal(detections_all, N_one_sided):
-    P_D_all = []
-    for detections in detections_all:
-        P_D = np.zeros_like(detections, dtype=float)
-        for k in range(len(detections)):
-            k_lower = k-N_one_sided
-            k_upper = k+N_one_sided+1
-            if k_lower < 0:
-                k_lower = 0
-            if k_upper > len(detections):
-                k_upper = len(detections)
-            P_D[k] = np.mean(detections[k_lower:k_upper], dtype=float)
-        P_D_all.append(P_D)
-    return P_D_all
+def calculate_moving_average_detection_probability(dataset, mmsi, N_one_sided):
+    detections = dataset.detections[mmsi]
+    P_D = np.zeros_like(detections, dtype=float)
+    for k in range(len(detections)):
+        k_lower = k-N_one_sided
+        k_upper = k+N_one_sided+1
+        if k_lower < 0:
+            k_lower = 0
+        if k_upper > len(detections):
+            k_upper = len(detections)
+        P_D[k] = np.mean(detections[k_lower:k_upper], dtype=float)
+    return P_D
 
 def plot_angular_detections(ax, angles, P_D, label):
     ax.plot(angles, P_D, label=label, lw=2)
@@ -210,9 +221,7 @@ def setup_polar_fig():
 
 
 if __name__ == '__main__':
-    chosen_rosbag = '/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_11_2018-09-25-14-06-12.bag'
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/2[57]-09-2018/filtered_bags/filtered_scenario_*.bag')
-    #plot_sample_time_cdf(all_files)
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/2[57]-09-2018/filtered_bags/*.bag')
     gate_probability = 0.99
     maximum_velocity = 15
     measurement_mapping = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
@@ -221,47 +230,39 @@ if __name__ == '__main__':
     detection_probability = 0.1
     track_gate = autocommon.TrackGate(gate_probability, maximum_velocity)
     measurement_model = autocommon.ConvertedMeasurementModel(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, detection_probability, 15**2)
-    detections_all = []
-    aspect_angle_all = []
-    range_all = []
 
 
-    chosen_mmsi = (autoais.known_mmsi['MUNKHOLMEN II'], autoais.known_mmsi['KSX_OSD1'])
+    chosen_mmsi = (munkholmen_mmsi, drone_mmsi)
     datasets = load_data(all_files)
     filter_data(datasets, chosen_mmsi)
-    radar_detection_data, ais_detection_data = calculate_detection_statistics(datasets, measurement_model, track_gate, velocity_threshold=1)
+    calculate_detection_statistics(
+            datasets,
+            measurement_model,
+            track_gate,
+            1)
 
-    munkholmen_data = ais_detection_data[autoais.known_mmsi['MUNKHOLMEN II']]
-    drone_data = ais_detection_data[autoais.known_mmsi['KSX_OSD1']]
     titles = ['Munkholmen', 'OSD', 'Radar']
-    
     polar_ais_fig, polar_ais_ax = setup_polar_fig()
     polar_radar_fig, polar_radar_ax = setup_polar_fig()
     polar_axes = [polar_ais_ax, polar_ais_ax, polar_radar_ax]
-    range_fig, range_ax = plt.subplots(nrows=2)
-    for k, data in enumerate([munkholmen_data, drone_data, radar_detection_data]):
-        angles, P_D, tries = cluster_detections_angle(data['detections'], data['aspect_angle'], 36, True)
+    for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi, RADAR_KEY]):
+        angles, P_D, tries = cluster_detections_angle(datasets, mmsi, 36, True)
         plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
         print "average P_D={} for {}".format(np.mean(P_D), titles[k])
-        target_range, P_D, tries = cluster_detections_range(data['detections'], data['target_range'], 10)
-        plot_range_detections(range_ax[0], target_range, P_D)
-        plot_range_num_scans(range_ax[1], target_range, tries)
     polar_ais_ax.legend(bbox_to_anchor=(1.3, 1))
-
-    P_D_all = cluster_detections_temporal(drone_data['detections'], 15)
-    for P_D, aspect_angle in zip(P_D_all, data['aspect_angle']):
-        temporal_fig, temporal_ax = plt.subplots(nrows=2)
-        temporal_ax[0].plot(P_D)
-        temporal_ax[0].set_ylim(0,1)
-        temporal_ax[1].plot(np.rad2deg(np.array(aspect_angle)))
-    plt.show()
-
-
-
-
     plt.tight_layout()
     polar_ais_ax.set_title('AIS-based probability of detection')
     polar_radar_ax.set_title('Radar-based probability of detection')
     polar_ais_fig.savefig('detection_probability_ais.pdf')
     polar_radar_fig.savefig('detection_probability_radar.pdf')
+
+    for dataset in datasets:
+        P_D = calculate_moving_average_detection_probability(dataset, drone_mmsi, 10)
+        temporal_fig, temporal_ax = plt.subplots(nrows=4)
+        temporal_ax[0].plot(P_D)
+        temporal_ax[0].set_ylim(0,1)
+        temporal_ax[1].plot(np.rad2deg(np.array(dataset.aspect_angle[drone_mmsi])))
+        temporal_ax[2].plot(dataset.target_range[drone_mmsi])
+        temporal_ax[3].plot(np.rad2deg(dataset.ownship_vel[-1,dataset.valid_timestamp_idx[drone_mmsi]]))
+        temporal_ax[0].set_title(dataset.fname)
     plt.show()

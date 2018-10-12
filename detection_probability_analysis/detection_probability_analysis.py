@@ -217,11 +217,10 @@ def setup_polar_fig():
     ax.set_xticks((0, np.pi/2, np.pi, 3*np.pi/2))
     return fig, ax
 
-    
 
 
 if __name__ == '__main__':
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/2[57]-09-2018/filtered_bags/*.bag')
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/27-09-2018/filtered_bags/*.bag')
     gate_probability = 0.99
     maximum_velocity = 15
     measurement_mapping = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
@@ -250,19 +249,38 @@ if __name__ == '__main__':
         plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
         print "average P_D={} for {}".format(np.mean(P_D), titles[k])
     polar_ais_ax.legend(bbox_to_anchor=(1.3, 1))
-    plt.tight_layout()
     polar_ais_ax.set_title('AIS-based probability of detection')
     polar_radar_ax.set_title('Radar-based probability of detection')
     polar_ais_fig.savefig('detection_probability_ais.pdf')
     polar_radar_fig.savefig('detection_probability_radar.pdf')
 
+    pd_fig, pd_ax = plt.subplots(nrows=3, ncols=2)
+    pd_row, pd_col = 0, 0
+    scenario_numbers = ['1', '2', '4', '6', '7', '15']
     for dataset in datasets:
-        P_D = calculate_moving_average_detection_probability(dataset, drone_mmsi, 10)
-        temporal_fig, temporal_ax = plt.subplots(nrows=4)
-        temporal_ax[0].plot(P_D)
-        temporal_ax[0].set_ylim(0,1)
-        temporal_ax[1].plot(np.rad2deg(np.array(dataset.aspect_angle[drone_mmsi])))
-        temporal_ax[2].plot(dataset.target_range[drone_mmsi])
-        temporal_ax[3].plot(np.rad2deg(dataset.ownship_vel[-1,dataset.valid_timestamp_idx[drone_mmsi]]))
-        temporal_ax[0].set_title(dataset.fname)
+        plotted = False
+        for mmsi in [munkholmen_mmsi, drone_mmsi]:
+            P_D = calculate_moving_average_detection_probability(dataset, mmsi, 10)
+            if np.any(np.array([dataset.fname.find("_"+scen_num+"_") for scen_num in scenario_numbers]) > 0):
+                time = dataset.ownship_vel[0,dataset.valid_timestamp_idx[mmsi]]
+                if len(time) > 0:
+                    pd_ax[pd_row, pd_col].plot(time-time[0],P_D, lw=2)
+                    pd_ax[pd_row, pd_col].set_ylim(0, 1)
+                    pd_ax[pd_row, pd_col].set_xlabel('time [s]')
+                    pd_ax[pd_row, pd_col].set_ylabel('$P_D$')
+                    plotted = True
+        if plotted:
+            pd_row += 1
+            if pd_row > 2:
+                pd_row = 0
+                pd_col += 1
+        #temporal_fig, temporal_ax = plt.subplots(nrows=4)
+        #temporal_ax[0].plot(P_D)
+        #temporal_ax[0].set_ylim(0,1)
+        #temporal_ax[1].plot(np.rad2deg(np.array(dataset.aspect_angle[drone_mmsi])))
+        #temporal_ax[2].plot(dataset.target_range[drone_mmsi])
+        #temporal_ax[3].plot(np.rad2deg(dataset.ownship_vel[-1,dataset.valid_timestamp_idx[drone_mmsi]]))
+        #temporal_ax[0].set_title(dataset.fname)
+    plt.tight_layout()
+    pd_fig.savefig('varying_pd.pdf')
     plt.show()

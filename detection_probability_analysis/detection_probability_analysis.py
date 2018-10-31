@@ -5,10 +5,12 @@ import matplotlib.pyplot as plt
 import autoseapy.bag_operations as autobag
 import autoseapy.tracking_common as autocommon
 import autoseapy.ais as autoais
+from scipy.stats import poisson
 
 RADAR_KEY = 'radar'
 munkholmen_mmsi = autoais.known_mmsi['MUNKHOLMEN II']
 drone_mmsi = autoais.known_mmsi['KSX_OSD1']
+telemetron_mmsi = autoais.known_mmsi['TELEMETRON']
 
 class DataStructure(object):
     def __init__(self, radar, ais, measurements, measurement_timestamps, ownship_pose, ownship_vel, fname):
@@ -154,9 +156,11 @@ def cluster_detections_angle(datasets, mmsi, N_bins, symmetrize=False):
         P_D[-1] = P_D[0]
     return new_angles, P_D, tries
 
-def cluster_detections_range(detections_all, target_range_all, N_bins):
-    detections = [detection for det_list in detections_all for detection in det_list]
-    target_range = [t_range for range_list in target_range_all for t_range in range_list]
+def cluster_detections_range(datasets, mmsi, N_bins):
+    detections, target_range = [], []
+    for dataset in datasets:
+        detections += dataset.detections[mmsi]
+        target_range += dataset.target_range[mmsi]
     new_target_range = np.linspace(np.min(target_range), np.max(target_range), N_bins)
     range_index = np.digitize(target_range, new_target_range, right=True)
     new_detections = np.zeros_like(new_target_range)
@@ -217,10 +221,27 @@ def setup_polar_fig():
     ax.set_xticks((0, np.pi/2, np.pi, 3*np.pi/2))
     return fig, ax
 
+def add_navigation_data(data_bag, navigation_bag):
+    import rosbag
+    with rosbag.Bag('output_bag.bag', 'w') as outbag:
+        for topic, message, timestamp in rosbag.Bag(data_bag).read_messages():
+            outbag.write(topic, message, timestamp)
+        for topic, message, timestamp in rosbag.Bag(navigation_bag).read_messages():
+            if topic in ['/seapath/pose', '/seapath/twist']:
+                outbag.write(topic, message, timestamp)
 
+def add_ais_data(data_bag, ais_bag):
+    import rosbag
+    with rosbag.Bag('output_bag.bag', 'w') as outbag:
+        for topic, message, timestamp in rosbag.Bag(data_bag).read_messages():
+            outbag.write(topic, message, timestamp)
+        for topic, message, timestamp in rosbag.Bag(ais_bag).read_messages():
+            if topic in ['/ais/ais_timestamped']:
+                outbag.write(topic, message, timestamp)
 
 if __name__ == '__main__':
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/27-09-2018/filtered_bags/*.bag')
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_*.bag')
+    #all_files = glob.glob('*.bag')
     gate_probability = 0.99
     maximum_velocity = 15
     measurement_mapping = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
@@ -231,7 +252,7 @@ if __name__ == '__main__':
     measurement_model = autocommon.ConvertedMeasurementModel(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, detection_probability, 15**2)
 
 
-    chosen_mmsi = (munkholmen_mmsi, drone_mmsi)
+    chosen_mmsi = (munkholmen_mmsi, drone_mmsi, telemetron_mmsi)
     datasets = load_data(all_files)
     filter_data(datasets, chosen_mmsi)
     calculate_detection_statistics(
@@ -240,47 +261,101 @@ if __name__ == '__main__':
             track_gate,
             1)
 
-    titles = ['Munkholmen', 'OSD', 'Radar']
-    polar_ais_fig, polar_ais_ax = setup_polar_fig()
-    polar_radar_fig, polar_radar_ax = setup_polar_fig()
-    polar_axes = [polar_ais_ax, polar_ais_ax, polar_radar_ax]
-    for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi, RADAR_KEY]):
-        angles, P_D, tries = cluster_detections_angle(datasets, mmsi, 36, True)
-        plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
-        print "average P_D={} for {}".format(np.mean(P_D), titles[k])
-    polar_ais_ax.legend(bbox_to_anchor=(1.3, 1))
-    polar_ais_ax.set_title('AIS-based probability of detection')
-    polar_radar_ax.set_title('Radar-based probability of detection')
-    polar_ais_fig.savefig('detection_probability_ais.pdf')
-    polar_radar_fig.savefig('detection_probability_radar.pdf')
+#    titles = ['Munkholmen', 'OSD', 'Radar']
+#    polar_ais_fig, polar_ais_ax = setup_polar_fig()
+#    polar_radar_fig, polar_radar_ax = setup_polar_fig()
+#    polar_axes = [polar_ais_ax, polar_ais_ax, polar_radar_ax]
+#    for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi]):
+#        angles, P_D, tries = cluster_detections_angle(datasets, mmsi, 36, True)
+#        plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
+#        print "average P_D={} for {}".format(np.mean(P_D), titles[k])
+#    polar_ais_ax.legend(bbox_to_anchor=(1.3, 1))
+#    polar_ais_ax.set_title('AIS-based probability of detection')
+#    polar_radar_ax.set_title('Radar-based probability of detection')
+#    polar_ais_fig.savefig('detection_probability_ais.pdf')
+#    polar_radar_fig.savefig('detection_probability_radar.pdf')
 
-    pd_fig, pd_ax = plt.subplots(nrows=3, ncols=2)
-    pd_row, pd_col = 0, 0
-    scenario_numbers = ['1', '2', '4', '6', '7', '15']
+    range_fig, range_ax = plt.subplots(nrows=2)
+    labels = ['Tugboat', 'Glass fiber boat', 'Radar tracks']
+    n_range_bins = 20
+    for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi, RADAR_KEY]):
+        ranges, PD, num_measurements = cluster_detections_range(datasets, mmsi, n_range_bins)
+        range_ax[0].plot(ranges, PD, label=labels[k])
+    range_bins = dict()
     for dataset in datasets:
-        plotted = False
-        for mmsi in [munkholmen_mmsi, drone_mmsi]:
+        for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi, RADAR_KEY]):
+            if mmsi not in range_bins.keys():
+                range_bins[mmsi] = []
+            range_bins[mmsi] += dataset.target_range[mmsi]
+    range_bin_dat = [range_bins[munkholmen_mmsi], range_bins[drone_mmsi], range_bins[RADAR_KEY]]
+    range_ax[1].hist(range_bin_dat, bins=n_range_bins, label=labels)
+    [ax.legend() for ax in range_ax]
+    range_ax[0].set_ylim(0, 1)
+    range_ax[0].set_title('$P_D$ based on range')
+    range_ax[0].set_ylabel('$P_D$')
+    [ax.set_xlabel('range [m]') for ax in range_ax]
+    range_ax[1].set_ylabel('Number of samples')
+    range_ax[1].set_ylabel('Total number of samples')
+    range_fig.savefig('PD_vs_range.pdf')
+
+    pd_fig, pd_ax = plt.subplots(nrows=2)
+    mh_fig, mh_ax = plt.subplots(nrows=2)
+    min_pd = {drone_mmsi : [], munkholmen_mmsi : []}
+    min_range = {drone_mmsi : [], munkholmen_mmsi : []}
+    for dataset in datasets:
+        fig, ax = plt.subplots(nrows=2)
+        for mmsi, target in zip([drone_mmsi, munkholmen_mmsi], ['Lifeboat', 'Tugboat']):
             P_D = calculate_moving_average_detection_probability(dataset, mmsi, 10)
-            if np.any(np.array([dataset.fname.find("_"+scen_num+"_") for scen_num in scenario_numbers]) > 0):
-                time = dataset.ownship_vel[0,dataset.valid_timestamp_idx[mmsi]]
-                if len(time) > 0:
-                    pd_ax[pd_row, pd_col].plot(time-time[0],P_D, lw=2)
-                    pd_ax[pd_row, pd_col].set_ylim(0, 1)
-                    pd_ax[pd_row, pd_col].set_xlabel('time [s]')
-                    pd_ax[pd_row, pd_col].set_ylabel('$P_D$')
-                    plotted = True
-        if plotted:
-            pd_row += 1
-            if pd_row > 2:
-                pd_row = 0
-                pd_col += 1
-        #temporal_fig, temporal_ax = plt.subplots(nrows=4)
-        #temporal_ax[0].plot(P_D)
-        #temporal_ax[0].set_ylim(0,1)
-        #temporal_ax[1].plot(np.rad2deg(np.array(dataset.aspect_angle[drone_mmsi])))
-        #temporal_ax[2].plot(dataset.target_range[drone_mmsi])
-        #temporal_ax[3].plot(np.rad2deg(dataset.ownship_vel[-1,dataset.valid_timestamp_idx[drone_mmsi]]))
-        #temporal_ax[0].set_title(dataset.fname)
+            current_range = dataset.target_range[mmsi]
+            time = dataset.ownship_vel[0,dataset.valid_timestamp_idx[mmsi]]
+            if len(time) > 0:
+                min_range[mmsi].append(np.min(current_range))
+                min_pd[mmsi].append(np.min(P_D))
+                ax[0].plot(time-time[0],P_D, lw=2, label=target)
+                ax[0].set_ylim(0, 1)
+                ax[1].set_xlabel('time [s]')
+                ax[0].set_ylabel('$P_D$')
+                ax[1].plot(time-time[0], current_range, lw=2)
+        ax[0].legend()
+        ax[1].grid()
+        ax[1].set_ylabel('Range')
+        ax[1].set_ylim(0, 1800)
+        ax[1].set_yticks(np.arange(0, 2000, 200))
+    scat_fig, scat_ax = plt.subplots()
+    for mmsi, color in zip([drone_mmsi, munkholmen_mmsi], plt.rcParams['axes.color_cycle']):
+        scat_ax.scatter(min_range[mmsi], min_pd[mmsi],c=color)
+
+    pd_ax[0].set_title('Detection probability')
+
+    # moving average number of measurements (i.e. false alarms)
+    hist_fig, hist_ax = plt.subplots()
+    num_avg = 10
+    num_all = []
+    means_all = []
+    for dataset in datasets:
+        means = []
+        num_measurements = []
+        for k, _ in enumerate(dataset.measurements):
+            k_min = np.max([0, k-num_avg])
+            k_max = np.min([len(dataset.measurements), k+num_avg])
+            means.append(np.mean([len(z) for z in dataset.measurements[k_min:k_max]]))
+            num_measurements.append(len(dataset.measurements[k]))
+        num_all.append(num_measurements)
+        time = np.array(dataset.measurement_timestamps)
+        pd_ax[1].plot(time-time[0], means, lw=2)
+        means_all.append(means)
+    x_vals = np.arange(np.max(np.max(num_all))+1)
+    hist_ax.hist(num_all, bins=x_vals,normed=True, edgecolor='none')
+    for num in num_all:
+        pdfs = poisson(mu=np.mean(num)).pmf(x_vals)
+        hist_ax.plot(x_vals, pdfs, 'k', lw=2)
+    pd_ax[1].set_title('Number of measurements')
+
+    hist_ax.set_title('Measurements per scan')
+    hist_fig.savefig('hist_num_measurements.pdf')
+
+
+    # Total number of measurements (histogram)
     plt.tight_layout()
     pd_fig.savefig('varying_pd.pdf')
     plt.show()

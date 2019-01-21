@@ -24,7 +24,11 @@ def get_absolute_distance(radar_track_file, ais_track_file):
     distance_data = dict()
     for radar_id, radar_track, ais_id, ais_track in iterate_pair_of_track_files(radar_track_file, ais_track_file):
         radar_timestamps = np.array([estimate.timestamp for estimate in radar_track])
-        filtered_ais_track = autotrack.sync_track_list(radar_timestamps, ais_track)
+        ais_timestamps = np.array([estimate.timestamp for estimate in ais_track])
+        if np.all(radar_timestamps == ais_timestamps):
+            filtered_ais_track = ais_track
+        else:
+            filtered_ais_track = autotrack.sync_track_list(radar_timestamps, ais_track)
         distance_all = []
         for k, estimates in enumerate(zip(radar_track, filtered_ais_track)):
             radar_est, ais_est = estimates
@@ -35,15 +39,17 @@ def get_absolute_distance(radar_track_file, ais_track_file):
 
 def get_true_tracks(radar_track_file, ais_track_file, distance_threshold=200):
     true_tracks = dict()
-    corresponding_mmsi = dict()
+    mmsi_dict = dict()
     absolute_distance = get_absolute_distance(radar_track_file, ais_track_file)
     for id_pair, data in absolute_distance.items():
         radar_id, mmsi = id_pair
         timestamps, absolute_distance = data
         if np.all(absolute_distance < distance_threshold):
             true_tracks[radar_id] = radar_track_file[radar_id]
-            corresponding_mmsi[radar_id] = mmsi
-    return true_tracks, corresponding_mmsi
+            if mmsi not in mmsi_dict.keys():
+                mmsi_dict[mmsi] = set()
+            mmsi_dict[mmsi].add(radar_id)
+    return true_tracks, mmsi_dict
 
 def get_coherence_measure(track_file, average_data=False):
     coherence_data = dict()
@@ -98,3 +104,42 @@ def get_existence_probabilities(track_file):
                 ext_out.append(1-estimate.existence_probability[2])
         existence_probs[track_id] = (np.array(time_out), np.array(ext_out))
     return existence_probs
+
+def get_validation_gate_area(track_file, validation_gate, H, R):
+    validation_gate_area = dict()
+    for track_id, est_list in track_file.items():
+        time_out = np.array([estimate.timestamp for estimate in est_list])
+        det_S_all = [np.linalg.det(H.dot(est.cov_prior).dot(H.T)+R) for est in est_list]
+        area = np.array([np.pi*validation_gate.gamma*np.sqrt(det_S) for det_S in det_S_all])
+        validation_gate_area[track_id] = (time_out, area)
+    return validation_gate_area
+
+def get_detection_probability(track_file, PD_values):
+    PD_out_all = dict()
+    for track_id, track_list in track_file.items():
+        time_out = []
+        PD_out = []
+        for estimate in track_list:
+            time_out.append(estimate.timestamp)
+            if isinstance(estimate.existence_probability, float):
+                PD_out.append(PD_values)
+            else:
+                existence_values = estimate.existence_probability[:-1]
+                existence_values = existence_values/np.sum(existence_values)
+                PD_out.append(existence_values*PD_values)
+        PD_out_all[track_id] = (np.array(time_out), np.array(PD_out))
+    return PD_out_all
+    # If estimate.existence probability is a scalar, it is assumed that PD_values also is a scalar corresponding to the PD used 
+
+def get_clutter_density(measurements_all, area_corners):
+    """ area_corners on the form [N_min, N_max, E_min, E_max]"""
+    N_min, N_max, E_min, E_max = area_corners
+    surveillance_area = (N_max-N_min)*(E_max-E_min)
+    num_clutter = []
+    for measurements in measurements_all:
+        current_num_clutter = 0
+        for measurement in measurements:
+            if measurement.value[0] < N_max and measurement.value[0] > N_min and measurement.value[1] < E_max and measurement.value[1] > E_min:
+                current_num_clutter += 1
+        num_clutter.append(current_num_clutter)
+    return np.mean(num_clutter)/surveillance_area

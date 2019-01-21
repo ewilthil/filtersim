@@ -5,11 +5,30 @@ import autoseapy.bag_operations as autobag
 import autoseapy.ais as autoais
 import autoseapy.tracking_common as tracking_common
 import autoseapy.tracking as autotrack
-import autoseapy.track_initiation as autoinit
-import autoseapy.track_management as automanagers
 import autoseapy.visualization as autovis
-import autoseapy.hidden_markov_model as hmm_models
 import analyse_tracks
+import setup_trackers
+color_cycle = plt.rcParams['axes.color_cycle']
+
+def add_landmark(measurements_all, landmark_mmsi, ais_data):
+    landmark_measurements = []
+    landmark_time = []
+    for measurements in measurements_all:
+        t_added = False 
+        for measurement in measurements:
+            z_pos = measurement.value
+            if z_pos[0] < 1500 and z_pos[0] > 1200 and z_pos[1] > 300 and z_pos[1] < 700: # Manually found
+                landmark_measurements.append(z_pos)
+                t_added = True
+                landmark_time.append(measurement.timestamp)
+    landmark_measurements = np.array(landmark_measurements)
+    landmark_mean = np.mean(landmark_measurements, axis=0)
+    landmark_data = []
+    ais_data[landmark_mmsi] = []
+    for t in landmark_time:
+        mark_est = tracking_common.Estimate(t, np.array([landmark_mean[0], 0, landmark_mean[1], 0]), np.identity(4), True, landmark_mmsi)
+        ais_data[landmark_mmsi].append(mark_est)
+
 
 def add_zero_sets(measurements_all, measurement_timestamps):
     insert_indices = []
@@ -26,82 +45,24 @@ def add_zero_sets(measurements_all, measurement_timestamps):
     return measurements_all, measurement_timestamps
 
 selected_bag = '/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_6_2018-09-25-11-28-47.bag'
-chosen_targets = [autoais.known_mmsi['TELEMETRON'], autoais.known_mmsi['MUNKHOLMEN II'], autoais.known_mmsi['KSX_OSD1']]
+landmark_mmsi = 123456789
+munkholmen_mmsi = autoais.known_mmsi['MUNKHOLMEN II']
+drone_mmsi = autoais.known_mmsi['KSX_OSD1']
+chosen_targets = [autoais.known_mmsi['TELEMETRON'], munkholmen_mmsi, drone_mmsi]
 ais_data, measurements, measurement_timestamps = autobag.bag2raw_data(selected_bag, return_timestamps=True)
 ais_data_filtered = {mmsi : ais_data[mmsi] for mmsi in chosen_targets if mmsi in ais_data.keys()}
 ais_data_targets = {mmsi : ais_data[mmsi] for mmsi in chosen_targets if mmsi in ais_data.keys() and mmsi is not autoais.known_mmsi['TELEMETRON']}
 measurements, measurement_timestamps = add_zero_sets(measurements, measurement_timestamps)
 ownship_pose, ownship_twist = autobag.bag2navigation_data(selected_bag, timestamps=measurement_timestamps)
 
-
-target_process_noise_covariance = 0.05**2
-gate_probability = 0.99
-maximum_velocity = 15
-measurement_mapping = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
-measurement_covariance = 15**2*np.identity(2)
-measurement_covariance_range = 20**2
-measurement_covariance_bearing = np.deg2rad(2.2997)**2
-survival_probability = 1.0
-init_prob = 0.3
-conf_threshold = 0.95
-term_threshold = 0.1
-
-low_PD = 0.3
-high_PD = 0.8
-hmm_transition_matrix = np.array([[0.9, 0.1], [0.1, 0.9]])
-hmm_emission_matrix = np.array([[1-low_PD, 1-high_PD], [low_PD, high_PD]])
-hmm_initial_probability = np.array([0.5, 0.5])
-hmm_pd = hmm_models.HiddenMarkovModel(hmm_transition_matrix, hmm_emission_matrix, hmm_initial_probability, [low_PD, high_PD])
-# Markov chain 2 parameters
-P_low = 0.7
-P_high = 0.7
-P_birth = 0.0
-P_term = 1-survival_probability
-
-target_model = tracking_common.DWNAModel(target_process_noise_covariance)
-track_gate = tracking_common.TrackGate(gate_probability, maximum_velocity)
-measurement_model = tracking_common.ConvertedMeasurementModel(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, high_PD, 15**2)
-mc2_measurement_model = tracking_common.ConvertedMeasurementModel(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, [low_PD, high_PD], 15**2)
-van_mc2_measurement_model = tracking_common.ConvertedMeasurementModel(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, [0, high_PD], 15**2)
-markov_measurement_model = tracking_common.ConvertedMeasurementModelMarkovDetectionProbability(measurement_mapping, measurement_covariance_range, measurement_covariance_bearing, hmm_pd, 15**2)
-
-# Vanilla IPDAs
-ipda_tracker = autotrack.IPDAFTracker(target_model, measurement_model, track_gate, survival_probability)
-ipda_init = autoinit.IPDAInitiator(ipda_tracker, init_prob, conf_threshold, term_threshold)
-ipda_term = autotrack.IPDATerminator(term_threshold)
-track_manager = automanagers.Manager(ipda_tracker, ipda_init, ipda_term)
-
-
-# HMM-based IPDA
-hmm_ipda_tracker = autotrack.IPDAFTracker(target_model, markov_measurement_model, track_gate, survival_probability)
-hmm_ipda_init = autoinit.IPDAInitiator(hmm_ipda_tracker, init_prob, conf_threshold, term_threshold)
-hmm_ipda_term = autotrack.IPDATerminator(term_threshold)
-hmm_track_manager = automanagers.Manager(hmm_ipda_tracker, hmm_ipda_init, hmm_ipda_term)
-
-markov_probabilities = np.array([[P_low, 1-(P_low+P_term), P_term], [1-(P_high+P_term), P_high, P_term], [0.5*P_birth, 0.5*P_birth, 1-P_birth]]).T
-# Vanilla MC2 IPDA
-
-vanilla_mc2_ipda_tracker = autotrack.MC2IPDAFTracker(target_model, van_mc2_measurement_model, track_gate, markov_probabilities)
-vanilla_mc2_ipda_tracker_init = autotrack.IPDAFTracker(target_model, measurement_model, track_gate, survival_probability)
-vanilla_mc2_ipda_init = autoinit.IPDAInitiator(vanilla_mc2_ipda_tracker_init, init_prob, conf_threshold, term_threshold)
-vanilla_mc2_ipda_term = autotrack.MC2IPDATerminator(term_threshold)
-vanilla_ipda_mc2_manager = automanagers.Manager(vanilla_mc2_ipda_tracker, vanilla_mc2_ipda_init, vanilla_mc2_ipda_term)
-
-# Extra MC2 IPDA
-
-#markov_probabilities = np.identity(3)
-mc2_ipda_tracker = autotrack.MC2IPDAFTracker(target_model, mc2_measurement_model, track_gate, markov_probabilities)
-mc2_ipda_tracker_init = autotrack.IPDAFTracker(target_model, measurement_model, track_gate, survival_probability)
-mc2_ipda_init = autoinit.IPDAInitiator(mc2_ipda_tracker_init, init_prob, conf_threshold, term_threshold)
-mc2_ipda_term = autotrack.MC2IPDATerminator(term_threshold)
-ipda_mc2_manager = automanagers.Manager(mc2_ipda_tracker, mc2_ipda_init, mc2_ipda_term)
+ipda_track_manager = setup_trackers.setup_ipda_manager()
+hmm_track_manager = setup_trackers.setup_hmm_ipda_manager()
+vanilla_ipda_mc2_manager = setup_trackers.setup_mc2_ipda_manager()
+ipda_mc2_manager = setup_trackers.setup_mcn_ipda_manager()
 
 # Experiment with different settings for 1D 
-titles = ['reg. mc1', 'hmm mc1', 'reg. mc2', 'hmm mc2']
-current_managers = [track_manager, hmm_track_manager, vanilla_ipda_mc2_manager, ipda_mc2_manager]
-#current_managers = [track_manager, hmm_track_manager, ipda_mc2_manager]
-#current_managers = [track_manager, ipda_mc2_manager]
-#current_managers = [track_manager]
+current_managers = [ipda_track_manager, hmm_track_manager, vanilla_ipda_mc2_manager, ipda_mc2_manager]
+#current_managers = [hmm_track_manager]
 [manager.reset for manager in current_managers]
 for k, measurement in enumerate(measurements):
     timestamp = measurement_timestamps[k]
@@ -109,15 +70,6 @@ for k, measurement in enumerate(measurements):
     for manager in current_managers:
         manager.tracking_method.measurement_model.update_ownship(current_position)
         manager.step(measurement, timestamp)
-    print "stepped {}/{}".format(k+1, len(measurements))
-fig, ax = plt.subplots()
-autovis.plot_track_pos(ais_data_filtered, ax, add_index=True)
-autovis.plot_measurements(measurements, ax)
-autovis.plot_track_pos(track_manager.track_file, ax, color='r', add_index=True)
-autovis.plot_track_pos(hmm_track_manager.track_file, ax, color='g', add_index=True)
-autovis.plot_track_pos(ipda_mc2_manager.track_file, ax, color='b', add_index=True)
-autovis.plot_track_pos(vanilla_ipda_mc2_manager.track_file, ax, color='c', add_index=True)
-ax.set_aspect('equal')
 
 def plot_normalized_distance(track_file, ais_file, title, ax):
     correspondence_dict = analyse_tracks.get_normalized_distance(track_file, ais_file)
@@ -144,6 +96,7 @@ def plot_true_tracks(track_file, ais_file,title, ax):
     true_tracks, _ = analyse_tracks.get_true_tracks(track_file, ais_file)
     false_tracks = {radar_id : radar_ests for radar_id, radar_ests in track_file.items() if radar_id not in true_tracks.keys()}
     print "Number of true/false tracks: {}/{} for {}".format(len(true_tracks), len(false_tracks), title)
+    print "Average length of false tracks: {} for {}".format(np.mean([len(estimates) for estimates in false_tracks.values()]), title)
     autovis.plot_track_pos(ais_file, ax, add_index=False)
     autovis.plot_measurements(measurements, ax)
     autovis.plot_track_pos(true_tracks, ax, color=color_cycle[0], add_index=True)
@@ -159,16 +112,183 @@ def plot_existence_probability(track_file, title, ax):
         ax.plot(time, existence)
         ax.text(time[-1], existence[-1], str(track_id))
         ax.set_title('Existence probability - {}'.format(title))
-def plot_false_track_duration(track_file, title, ax):
-    false_track_duration = [len(est_list) for est_list in track_file.values()]
-    print np.mean(false_track_duration)
 
-for manager, title in zip(current_managers, titles):
+def plot_false_track_duration(track_file, title, ax):
+    durations = [len(track_list) for track_list in track_file.values()]
+    durations.sort()
+    cumulative_prob_duration = [float(n+1)/(len(durations)) for n in range(len(durations))]
+    # Hack it to look nice with a starting vertical line
+    durations.insert(0, 0.9*durations[0])
+    cumulative_prob_duration.insert(0, 0)
+    ax.step(durations, cumulative_prob_duration, where='post',label=title, lw=2)
+
+def find_track_confirm_time(track_file):
+    existence_probabilities = analyse_tracks.get_existence_probabilities(track_file)
+    conf_times = []
+    for track_id, data in existence_probabilities.items():
+        time, existence = data
+        is_preliminary = True
+        len_preliminary = 0
+        for ext_val in existence:
+            if ext_val < setup_trackers.conf_threshold and is_preliminary:
+                len_preliminary += 1
+            elif ext_val >= setup_trackers.conf_threshold:
+                is_preliminary = False
+        conf_times.append(len_preliminary)
+    return conf_times
+
+def plot_detection_probability(track_file, PD_values, title, ax):
+    PD_all = analyse_tracks.get_detection_probability(track_file, PD_values)
+    for track_id, data in PD_all.items():
+        time, PD = data
+        ax.plot(time, PD)
+        ax.set_title('Existence probability - {}'.format(title))
+
+def plot_existence_prob(radar_id_list, track_file, ax, track_label, t0=False, color='k', style='-'):
+    existence_probabilities = analyse_tracks.get_existence_probabilities(track_file)
+    for radar_id in radar_id_list:
+        time, ext_prob = existence_probabilities[radar_id]
+        if t0 != False:
+            time = time-t0
+        ax.plot(time, ext_prob, label=track_label, color=color, ls=style)
+
+def plot_detection_probability(radar_id_list, track_manager, ax, track_label, t0=0, color='k', style='-'):
+    for radar_id in radar_id_list:
+        time = np.array([est.timestamp for est in track_manager.track_file[radar_id]])-t0
+        detection_probabilities = np.zeros_like(time)
+        if track_label == 'IPDA' or track_label == 'MC2-IPDA':
+            detection_probabilities = track_manager.tracking_method.measurement_model.detection_probability*np.ones_like(time)
+        elif track_label == 'HMM-IPDA':
+            mode_probabilities = hmm_track_manager.tracking_method.measurement_model.detection_probability.state_probabilities[radar_id]
+            mode_values = hmm_track_manager.tracking_method.measurement_model.detection_probability.state_values
+            detection_probabilities = np.array([np.sum(elem*mode_values) for elem in mode_probabilities])
+        elif track_label == 'MCN-IPDA':
+            pass
+        ax.plot(time, detection_probabilities, color=color, ls=style)
+
+
+
+add_landmark(measurements, landmark_mmsi, ais_data_targets)
+
+#TODO the PD for the HMM isnt properly evaluated
+PD_values_all = [0.5, [0.3, 0.8], [0, 0.5], [0.3, 0.8]]
+dur_fig = plt.figure(figsize=(7,4))
+dur_ax = dur_fig.add_axes((0.15, 0.15, 0.8, 0.8))
+dur_fig, dur_ax = plt.subplots()
+ext_fig, ext_ax = plt.subplots(nrows=3)
+
+pub_fig = plt.figure(figsize=(7,4))
+pub_ax = pub_fig.add_axes((0.15, 0.15, 0.8, 0.8))
+track_labels = ['OSD', 'MH2', 'LM']
+manager_labels = ['IPDA', 'HMM-IPDA', 'MC2-IPDA', 'MCN-IPDA']
+for k, manager in enumerate(current_managers):
+    manager_label = manager_labels[k]
+    title = repr(manager.tracking_method)
     fig, ax = plt.subplots(nrows=2,ncols=2)
-    true_tracks, false_tracks = plot_true_tracks(manager.track_file, ais_data_targets, title, ax[0,0])
+    true_tracks, mmsi_dict = analyse_tracks.get_true_tracks(manager.track_file, ais_data_targets)
+    false_tracks = {radar_id : radar_ests for radar_id, radar_ests in manager.track_file.items() if radar_id not in true_tracks.keys()}
+    for mmsi, e_ax, track_label in zip([drone_mmsi, munkholmen_mmsi, landmark_mmsi], ext_ax, track_labels):
+        if mmsi in mmsi_dict.keys():
+            plot_existence_prob(mmsi_dict[mmsi], true_tracks, e_ax, track_label)
+            e_ax.set_title(track_label)
+            if mmsi == drone_mmsi:
+                plot_existence_prob(mmsi_dict[mmsi], true_tracks, pub_ax, manager_label, measurement_timestamps[0], color_cycle[k], style='-')
+                #plot_detection_probability(mmsi_dict[mmsi], manager, pub_ax[1], manager_label, measurement_timestamps[0], color_cycle[k], style='--')
+    plot_true_tracks(manager.track_file, ais_data_targets, title, ax[0,0])
+    conf_times = find_track_confirm_time(true_tracks)
+    print "True track confirmation times: {}".format(conf_times)
     plot_false_track_duration(false_tracks, title, ax[1,0])
+    plot_false_track_duration(false_tracks, manager_labels[k], dur_ax)
     plot_existence_probability(true_tracks, title, ax[0,1])
     plot_existence_probability(false_tracks, title, ax[1,1])
-
+[e_ax.legend() for e_ax in ext_ax]
+pub_ax.grid('on')
+dur_ax.legend(loc='lower left')
+dur_ax.grid()
+dur_ax.set_xlabel('Time [s]')
+pub_ax.set_xlabel('Time [s]')
+pub_ax.set_ylabel('Existence probability')
+pub_ax.legend()
+pub_ax.set_yticks(np.arange(0, 1.1, 0.2))
 # Create publication-quality figs
+dur_fig.savefig('duration_cumulative.pdf')
+pub_fig.savefig('ext_prob_all.pdf')
+
+xy_fig = plt.figure(figsize=(7,7))
+xy_ax = xy_fig.add_axes((0.15, 0.15, 0.8, 0.8))
+for measurement_set in measurements:
+    for measurement in measurement_set:
+        z_line, = xy_ax.plot(measurement.value[1], measurement.value[0], '.', color='#aaaaaa')
+ownship_line, = xy_ax.plot(ownship_pose[2,:], ownship_pose[1,:], 'k--')
+end_position, = xy_ax.plot(ownship_pose[2,-1], ownship_pose[1,-1], 'ko')
+map_labels = ['OSD', 'MH II', 'Mark']
+for mmsi, label in zip([drone_mmsi, munkholmen_mmsi, landmark_mmsi], map_labels):
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in ais_data_targets[mmsi]])
+    target_line, = xy_ax.plot(position[:,1], position[:,0], 'k-')
+    xy_ax.plot(position[-1,1], position[-1,0], 'ko')
+    xy_ax.text(position[-1,1], position[-1,0]-250, label)
+for track_id, track_list in true_tracks.items():
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in track_list])
+    true_target_line, = xy_ax.plot(position[:,1], position[:,0], '-', color=color_cycle[0])
+    xy_ax.plot(position[-1,1], position[-1,0], 'o', color=color_cycle[0])
+
+for track_id, track_list in false_tracks.items():
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in track_list])
+    false_target_line, = xy_ax.plot(position[:,1], position[:,0], '-', color=color_cycle[2])
+    xy_ax.plot(position[-1,1], position[-1,0], 'o', color=color_cycle[2])
+
+#xy_ax.set_xlim(-1000, 5000)
+#xy_ax.set_ylim(-1000, 5000)
+xy_ax.set_xlim(1000, 3000)
+xy_ax.set_ylim(1000, 2400)
+xy_ax.set_aspect('equal')
+#xy_ax.legend([ownship_line, target_line, end_position, z_line, true_target_line, false_target_line], ['Ownship', 'Targets', 'End position', 'Measurements', 'True tracks', 'False tracks'])
+xy_ax.set_ylabel('North [m]')
+xy_ax.set_xlabel('East [m]')
+
+xy_fig.savefig('vanilla_results.pdf')
+
+xy_fig = plt.figure(figsize=(7,7))
+xy_ax = xy_fig.add_axes((0.15, 0.15, 0.8, 0.8))
+for measurement_set in measurements:
+    for measurement in measurement_set:
+        z_line, = xy_ax.plot(measurement.value[1], measurement.value[0], '.', color='#aaaaaa')
+ownship_line, = xy_ax.plot(ownship_pose[2,:], ownship_pose[1,:], 'k--')
+end_position, = xy_ax.plot(ownship_pose[2,-1], ownship_pose[1,-1], 'ko')
+map_labels = ['OSD', 'MH II', 'Mark']
+for mmsi, label in zip([drone_mmsi, munkholmen_mmsi, landmark_mmsi], map_labels):
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in ais_data_targets[mmsi]])
+    target_line, = xy_ax.plot(position[:,1], position[:,0], 'k-')
+    xy_ax.plot(position[-1,1], position[-1,0], 'ko')
+    xy_ax.text(position[-1,1], position[-1,0]-250, label)
+for track_id, track_list in true_tracks.items():
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in track_list])
+    true_target_line, = xy_ax.plot(position[:,1], position[:,0], '-', color=color_cycle[0])
+    xy_ax.plot(position[-1,1], position[-1,0], 'o', color=color_cycle[0])
+
+for track_id, track_list in false_tracks.items():
+    position = np.array([estimate.est_posterior[[0,2]] for estimate in track_list])
+    false_target_line, = xy_ax.plot(position[:,1], position[:,0], '-', color=color_cycle[2])
+    xy_ax.plot(position[-1,1], position[-1,0], 'o', color=color_cycle[2])
+
+xy_ax.set_xlim(-1000, 5000)
+xy_ax.set_ylim(-1000, 5000)
+xy_ax.set_xlim(400, 2400)
+xy_ax.set_ylim(1000, 3000)
+xy_ax.set_aspect('equal')
+#xy_ax.legend([ownship_line, target_line, end_position, z_line, true_target_line, false_target_line], ['Ownship', 'Targets', 'End position', 'Measurements', 'True tracks', 'False tracks'])
+xy_ax.set_ylabel('North [m]')
+xy_ax.set_xlabel('East [m]')
+
+xy_fig.savefig('vanilla_results.pdf')
+
+drone_synced = autotrack.sync_track_list(measurement_timestamps, ais_data_targets[drone_mmsi])
+
+#autovis.make_ais_movie(drone_synced, measurements, hmm_track_manager.track_file, 'movie_out')
+#autovis.make_ais_movie(drone_synced, measurements, {}, 'movie_out')
+#autovis.make_single_track_movie(est_list, measurements_all, measurement_model, fname, chosen_fps=10, spacing=300):
+#autovis.make_track_movie(ipda_track_manager.track_file, measurements, 'movie_out', ais_track_file=ais_data_targets)
+
+
+
 plt.show()

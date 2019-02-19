@@ -11,6 +11,7 @@ PD_high = 0.8
 PD_low = 0.3
 radar_range = 1000
 clutter_density = 20e-6
+clutter_density = 2e-6
 measurement_covariance = 10**2*np.identity(2)
 # Configure targets
 initial_positions = {
@@ -65,8 +66,8 @@ def generate_clutter(time, radar):
 
 target_mmsi = (drone_mmsi, munkholmen_mmsi, landmark_mmsi)
 
-def generate_scenario(targets=target_mmsi):
-    time = np.arange(0, 540, 3, dtype=float)
+def generate_scenario(targets=target_mmsi, tmax=540):
+    time = np.arange(0, tmax, 3, dtype=float)
     radar = autosim.SquareRadar(radar_range, clutter_density, PD_high, measurement_covariance)
     true_targets = dict()
     true_detectability_mode = dict()

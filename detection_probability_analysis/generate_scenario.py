@@ -12,7 +12,8 @@ PD_low = 0.3
 radar_range = 1000
 clutter_density = 20e-6
 clutter_density = 2e-6
-measurement_covariance = 10**2*np.identity(2)
+measurement_covariance_single_axis = 10**2
+measurement_covariance = measurement_covariance_single_axis*np.identity(2)
 # Configure targets
 initial_positions = {
         landmark_mmsi : np.array([-800, -800]),

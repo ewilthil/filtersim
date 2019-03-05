@@ -241,7 +241,7 @@ def add_ais_data(data_bag, ais_bag):
                 outbag.write(topic, message, timestamp)
 
 if __name__ == '__main__':
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_*')
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_6_2018-09-25-11-28-47.bag')
     #all_files = glob.glob('*.bag')
     gate_probability = 0.99
     maximum_velocity = 15
@@ -377,16 +377,19 @@ if __name__ == '__main__':
     munkholmen_time = munkholmen_time-munkholmen_time[0]
 
     
-    det_fig = plt.figure(figsize=(7,3.94))
-    det_ax = det_fig.add_axes((0.1, 0.15, 0.8, 0.8))
+    det_fig = plt.figure(figsize=(7,4))
+    det_ax = det_fig.add_axes((0.1, 0.15, 0.85, 0.75))
     det_ax.grid('on')
-    det_ax.plot(drone_time, P_D_drone_1, label='OSD')
-    det_ax.plot(munkholmen_time, P_D_munkholmen, label='MH II')
-    loc = det_ax.legend(loc=(4.5/6, 3./5))
+    l = det_ax.plot(drone_time, P_D_drone_1, label='OSD, $N=10$', lw=2)
+    det_ax.plot(drone_time, P_D_drone_2, label='OSD, $N=5$', ls='--', color=l[0].get_color(), lw=2)
+    det_ax.plot(munkholmen_time, P_D_munkholmen, label='MH II', lw=2)
+    loc = det_ax.legend(loc=(4.2/6, 2.9/5))
     det_ax.set_ylim(0, 1.1)
     det_ax.set_yticks(np.arange(0,1.1, 0.2))
-    det_ax.set_ylabel('Detection probability')
+    det_ax.set_title('Detection probability based on AIS-centered validation gate')
+    det_ax.set_ylabel('$P_D$')
     det_ax.set_xlabel('Time [s]')
+    det_ax.set_axisbelow(True)
     det_fig.savefig('detection_probability.pdf')
     plt.show()
 

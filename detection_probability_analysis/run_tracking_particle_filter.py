@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 np.random.seed(12345) # The seed 12346 may have bad initialization / measurements?
 from ipdb import set_trace
 import autoseapy.visualization as autovis
-import generate_pf_scenario as setup
+import generate_single_target_scenario as setup
 import setup_trackers
 import autoseapy.track_management as automanager
 import autoseapy.particle_filters as autopart

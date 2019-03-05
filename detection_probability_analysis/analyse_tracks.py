@@ -20,6 +20,17 @@ def get_normalized_distance(radar_track_file, ais_track_file):
         normalized_distance[(radar_id, ais_id)] = (radar_timestamps, np.array(normalized_distance_all))
     return normalized_distance
 
+def get_single_absolute_distance(radar_est_list, ais_est_list):
+    radar_timestamps = np.array([estimate.timestamp for estimate in radar_est_list])
+    ais_timestamps = np.array([estimate.timestamp for estimate in ais_est_list])
+    filtered_ais_track = autotrack.sync_track_list(radar_timestamps, ais_est_list)
+    distance_all = []
+    for k, estimates in enumerate(zip(radar_est_list, filtered_ais_track)):
+        radar_est, ais_est = estimates
+        distance = np.linalg.norm(radar_est.est_posterior[[0,2]]-ais_est.est_posterior[[0,2]])
+        distance_all.append(distance)
+    return np.array(distance_all)
+
 def get_absolute_distance(radar_track_file, ais_track_file):
     distance_data = dict()
     for radar_id, radar_track, ais_id, ais_track in iterate_pair_of_track_files(radar_track_file, ais_track_file):
@@ -50,6 +61,28 @@ def get_true_tracks(radar_track_file, ais_track_file, distance_threshold=200):
                 mmsi_dict[mmsi] = set()
             mmsi_dict[mmsi].add(radar_id)
     return true_tracks, mmsi_dict
+
+def get_true_tracks_time(radar_track_file, ais_track_file, time, distance_threshold=200):
+    """ Assumes ais_track_file contains true tracks synchronized with the time-vector. """
+    track_status = [dict() for _ in time]
+    track_status = {timestamp : dict() for timestamp in time}
+    radar_start_times = {radar_track_index : estimate_list[0].timestamp for radar_track_index, estimate_list in radar_track_file.items()}
+    radar_end_times = {radar_track_index : estimate_list[-1].timestamp for radar_track_index, estimate_list in radar_track_file.items()}
+    for k_time, current_timestamp in enumerate(time):
+        for radar_track_index, estimate_list in radar_track_file.items():
+            if estimate_list[0].timestamp > current_timestamp or estimate_list[-1].timestamp < current_timestamp:
+                track_status[current_timestamp][radar_track_index] = 'inactive'
+            else: # Track is active, figure out if it is true or false
+                current_est_list = [estimate for estimate in estimate_list if estimate.timestamp <= current_timestamp]
+                max_distance = np.array([np.max(get_single_absolute_distance(current_est_list, ais_list)) for ais_list in ais_track_file.values()])
+                if np.any(max_distance < distance_threshold):
+                    track_status[current_timestamp][radar_track_index] = 'true'
+                else:
+                    track_status[current_timestamp][radar_track_index] = 'false'
+    return track_status
+
+def get_true_tracks_measurements(estimated_track_file, true_track_file):
+    pass
 
 def get_coherence_measure(track_file, average_data=False):
     coherence_data = dict()
@@ -91,17 +124,21 @@ def get_track_existence(track_file):
         existence_probs[track_id] = np.array(ext_out)
     return existence_probs
 
+def get_existence_probability(track_list):
+    ext_out = []
+    time_out = []
+    for estimate in track_list:
+        time_out.append(estimate.timestamp)
+        if isinstance(estimate.existence_probability, float):
+            ext_out.append(estimate.existence_probability)
+        else:
+            ext_out.append(1-estimate.existence_probability[2])
+    return time_out, ext_out
+
 def get_existence_probabilities(track_file):
     existence_probs = dict()
     for track_id, track_list in track_file.items():
-        ext_out = []
-        time_out = []
-        for estimate in track_list:
-            time_out.append(estimate.timestamp)
-            if isinstance(estimate.existence_probability, float):
-                ext_out.append(estimate.existence_probability)
-            else:
-                ext_out.append(1-estimate.existence_probability[2])
+        time_out, ext_out = get_existence_probability(track_list)
         existence_probs[track_id] = (np.array(time_out), np.array(ext_out))
     return existence_probs
 
@@ -114,22 +151,26 @@ def get_validation_gate_area(track_file, validation_gate, H, R):
         validation_gate_area[track_id] = (time_out, area)
     return validation_gate_area
 
-def get_detection_probability(track_file, PD_values):
+def get_detection_probability(track_list, PD_values):
+    time_out = []
+    PD_out = []
+    for estimate in track_list:
+        time_out.append(estimate.timestamp)
+        if isinstance(estimate.existence_probability, float):
+            PD_out.append(PD_values)
+        else:
+            existence_values = estimate.existence_probability[:-1]
+            existence_values = existence_values/(1.0*np.sum(existence_values))
+            PD_out.append(np.dot(existence_values,PD_values))
+    return time_out, PD_out
+
+def get_detection_probabilities(track_file, PD_values):
+    """ If estimate.existence probability is a scalar, it is assumed that PD_values also is a scalar corresponding to the PD used """
     PD_out_all = dict()
     for track_id, track_list in track_file.items():
-        time_out = []
-        PD_out = []
-        for estimate in track_list:
-            time_out.append(estimate.timestamp)
-            if isinstance(estimate.existence_probability, float):
-                PD_out.append(PD_values)
-            else:
-                existence_values = estimate.existence_probability[:-1]
-                existence_values = existence_values/np.sum(existence_values)
-                PD_out.append(existence_values*PD_values)
+        time_out, PD_out = get_detection_probability(track_list, PD_values)
         PD_out_all[track_id] = (np.array(time_out), np.array(PD_out))
     return PD_out_all
-    # If estimate.existence probability is a scalar, it is assumed that PD_values also is a scalar corresponding to the PD used 
 
 def get_clutter_density(measurements_all, area_corners):
     """ area_corners on the form [N_min, N_max, E_min, E_max]"""

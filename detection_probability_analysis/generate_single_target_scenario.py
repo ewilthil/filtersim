@@ -10,7 +10,8 @@ munkholmen_mmsi = autoais.known_mmsi['MUNKHOLMEN II']
 PD_high = 0.8
 PD_low = 0.3
 radar_range = 1000
-clutter_density = 10/(4e6)
+clutter_density = 100/(4e6)
+clutter_density = 5e-5
 target_process_noise_covariance = 0.05**2
 measurement_covariance_single_axis = 10**2
 measurement_covariance = measurement_covariance_single_axis*np.identity(2)
@@ -62,26 +63,23 @@ target_mmsi = (drone_mmsi, munkholmen_mmsi, landmark_mmsi)
 def generate_scenario():
     time = np.arange(0, t_max, 3, dtype=float)
     radar = autosim.SquareRadar(radar_range, clutter_density, PD_high, measurement_covariance)
-    true_targets = dict()
-    true_detectability_mode = dict()
-    true_existence = dict()
-    measurements_all = generate_clutter(time, radar)
+    measurements_clutter = generate_clutter(time, radar)
     target_measurements, target_state, detectability_state, existence_state = generate_target(time, radar)
-    true_targets[munkholmen_mmsi] = target_state
-    true_detectability_mode[munkholmen_mmsi] = detectability_state
-    true_existence[munkholmen_mmsi] = existence_state
+    true_target = target_state
+    true_detectability_mode = detectability_state
+    true_existence = existence_state
+    measurements_all = []
     for k, measurement in enumerate(target_measurements):
-        measurements_all[k] = measurements_all[k].union(measurement)
-    return true_targets, true_detectability_mode, true_existence, measurements_all, time
+        measurements_all.append(measurements_clutter[k].union(measurement))
+    return true_target, true_detectability_mode, true_existence, measurements_clutter, measurements_all, time
 
 if __name__ == '__main__':
     import autoseapy.visualization as autovis
     import matplotlib.pyplot as plt
-    true_targets, true_detectability_mode, true_existence_mode, measurements, time = generate_scenario()
+    true_targets, true_detectability_mode, true_existence_mode, measurements_clutter, measurements_all, time = generate_scenario()
     target_fig = plt.figure(figsize=(7,7))
     target_ax = target_fig.add_axes((0.15, 0.15, 0.8, 0.8))
     autovis.plot_track_pos(true_targets, target_ax)
-    #autovis.plot_measurements(measurements, ax)
     target_ax.set_xlim(-radar_range, radar_range)
     target_ax.set_ylim(-radar_range, radar_range)
     target_ax.set_aspect('equal')
@@ -107,5 +105,4 @@ if __name__ == '__main__':
     det_ax.grid()
     target_fig.savefig('figs/pf_simulation_setup.pdf')
     det_fig.savefig('figs/pf_simulation_setup_detectability.pdf')
-    #autovis.make_track_movie(true_targets, measurements, 'sim_movie')
     plt.show()

@@ -151,7 +151,7 @@ def get_validation_gate_area(track_file, validation_gate, H, R):
         validation_gate_area[track_id] = (time_out, area)
     return validation_gate_area
 
-def get_detection_probability(track_list, PD_values):
+def get_detection_probability_mean(track_list, PD_values):
     time_out = []
     PD_out = []
     for estimate in track_list:
@@ -162,6 +162,19 @@ def get_detection_probability(track_list, PD_values):
             existence_values = estimate.existence_probability[:-1]
             existence_values = existence_values/(1.0*np.sum(existence_values))
             PD_out.append(np.dot(existence_values,PD_values))
+    return time_out, PD_out
+
+def get_detection_probability_mode(track_list, PD_values):
+    time_out = []
+    PD_out = []
+    for estimate in track_list:
+        time_out.append(estimate.timestamp)
+        if isinstance(estimate.existence_probability, float):
+            PD_out.append(PD_values)
+        else:
+            existence_values = estimate.existence_probability[:-1]
+            existence_values = existence_values/(1.0*np.sum(existence_values))
+            PD_out.append(PD_values[np.argmax(existence_values)])
     return time_out, PD_out
 
 def get_detection_probabilities(track_file, PD_values):

@@ -10,8 +10,8 @@ munkholmen_mmsi = autoais.known_mmsi['MUNKHOLMEN II']
 PD_high = 0.8
 PD_low = 0.3
 radar_range = 1000
-clutter_density = 20e-6
-clutter_density = 2e-6
+clutter_density = 5-5
+#clutter_density = 2e-6
 measurement_covariance_single_axis = 10**2
 measurement_covariance = measurement_covariance_single_axis*np.identity(2)
 # Configure targets

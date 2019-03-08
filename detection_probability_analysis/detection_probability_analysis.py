@@ -193,7 +193,6 @@ def calculate_moving_average_detection_probability(dataset, mmsi, N_one_sided):
 def plot_angular_detections(ax, angles, P_D, label):
     ax.plot(angles, P_D, label=label, lw=2)
     ax.set_ylim(0, 1)
-    ax.set_title('Detection probability')
 
 def plot_range_detections(ax, target_range, P_D):
     ax.plot(target_range, P_D)
@@ -241,7 +240,8 @@ def add_ais_data(data_bag, ais_bag):
                 outbag.write(topic, message, timestamp)
 
 if __name__ == '__main__':
-    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_6_2018-09-25-11-28-47.bag')
+    all_files = glob.glob('/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_*.bag')
+    print "analysing {} files".format(len(all_files))
     #all_files = glob.glob('*.bag')
     gate_probability = 0.99
     maximum_velocity = 15
@@ -262,16 +262,23 @@ if __name__ == '__main__':
             track_gate,
             1)
 
-    titles = ['Munkholmen', 'OSD', 'Radar']
+    def setup_polar_fig():
+        fig, ax = plt.subplots(figsize=(7,7),subplot_kw={'projection' : 'polar'})
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.grid(ls='-', color='#999999')
+        ax.set_xticks((0, np.pi/2, np.pi, 3*np.pi/2))
+        return fig, ax
+    titles = ['OSD', 'MH II' , 'Radar']
     polar_ais_fig, polar_ais_ax = setup_polar_fig()
     polar_radar_fig, polar_radar_ax = setup_polar_fig()
     polar_axes = [polar_ais_ax, polar_ais_ax, polar_radar_ax]
-    for k, mmsi in enumerate([munkholmen_mmsi, drone_mmsi, RADAR_KEY]):
+    for k, mmsi in enumerate([drone_mmsi, munkholmen_mmsi, RADAR_KEY]):
         angles, P_D, tries = cluster_detections_angle(datasets, mmsi, 36, True)
         plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
         print "average P_D={} for {}".format(np.mean(P_D), titles[k])
-    polar_ais_ax.legend(bbox_to_anchor=(1.3, 1))
-    polar_ais_ax.set_title('Probability of detection vs AIS aspect angle')
+    polar_ais_ax.legend(bbox_to_anchor=(1.1, 1))
+    #polar_ais_ax.set_title('Probability of detection with AIS aspect angle')
     polar_radar_ax.set_title('Probability of detection vs radar aspect angle')
     polar_ais_fig.savefig('detection_probability_ais.pdf')
     polar_radar_fig.savefig('detection_probability_radar.pdf')

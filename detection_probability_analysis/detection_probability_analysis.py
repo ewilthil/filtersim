@@ -269,6 +269,10 @@ if __name__ == '__main__':
         ax.grid(ls='-', color='#999999')
         ax.set_xticks((0, np.pi/2, np.pi, 3*np.pi/2))
         return fig, ax
+    boat_vertices_x = 0.1*np.array([0, 2,  2, -2, -2, 0])
+    boat_vertices_y = 0.1*np.array([5, 2, -4, -4,  2, 5])
+    boat_vertices_r = [np.sqrt(x**2+y**2) for x, y in zip(boat_vertices_x, boat_vertices_y)]
+    boat_vertices_t = [np.arctan2(x, y) for x, y in zip(boat_vertices_x, boat_vertices_y)]
     titles = ['OSD', 'MH II' , 'Radar']
     polar_ais_fig, polar_ais_ax = setup_polar_fig()
     polar_radar_fig, polar_radar_ax = setup_polar_fig()
@@ -277,6 +281,8 @@ if __name__ == '__main__':
         angles, P_D, tries = cluster_detections_angle(datasets, mmsi, 36, True)
         plot_angular_detections(polar_axes[k], angles, P_D, titles[k])
         print "average P_D={} for {}".format(np.mean(P_D), titles[k])
+    polar_ais_ax.plot(boat_vertices_t, boat_vertices_r, lw=2, color='k')
+    polar_ais_ax.set_ylim(0, 1)
     polar_ais_ax.legend(bbox_to_anchor=(1.1, 1))
     #polar_ais_ax.set_title('Probability of detection with AIS aspect angle')
     polar_radar_ax.set_title('Probability of detection vs radar aspect angle')

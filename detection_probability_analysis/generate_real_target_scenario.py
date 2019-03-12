@@ -8,7 +8,6 @@ import autoseapy.hidden_markov_model as hmm_models
 
 import generate_single_target_scenario as gen_scen
 
-target_process_noise_covariance = 0.05**2
 gate_probability = 0.99
 maximum_velocity = 15
 measurement_mapping = np.array([[1, 0, 0, 0],[0, 0, 1, 0]])
@@ -20,7 +19,7 @@ measurement_covariance_bearing = np.deg2rad(2.2997)**2
 survival_probability = 1.0
 new_target_probability = 0.0
 init_prob = 0.2
-markov_init_prob = np.array([0.15, 0.15, 0.7])
+markov_init_prob = np.array([init_prob/2, init_prob/2, 1-init_prob])
 conf_threshold = 0.99
 term_threshold = 0.1
 P_low = 0.8

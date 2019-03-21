@@ -333,12 +333,15 @@ if __name__ == '__main__':
                 ax[0].set_ylabel('$P_D$')
                 ax[1].plot(time-time[0], current_range, lw=2)
             if dataset.fname == '/Users/ewilthil/Documents/autosea_testdata/25-09-2018/filtered_bags/filtered_scenario_6_2018-09-25-11-28-47.bag':
-                f_ax.plot(time-time[0], P_D, lw=2, label=target)
+                l, = f_ax.plot(time-time[0], P_D, lw=2, label="{}, N=10".format(target))
+                P_D_N = calculate_moving_average_detection_probability(dataset, mmsi, 5)
+                if target == 'OSD':
+                    f_ax.plot(time-time[0], P_D_N, lw=2, label="{}, N=5".format(target), color=l.get_color(), ls='--')
                 f_ax.grid('on')
                 f_ax.set_ylim(0, 1)
                 f_ax.set_xlabel('time [s]')
                 f_ax.set_ylabel('$P_D$')
-                f_ax.set_title('Detection probability based on AIS-centered gate')
+                #f_ax.set_title('Detection probability based on AIS-centered gate')
         ax[0].legend()
         ax[1].grid()
         ax[1].set_ylabel('Range')
@@ -348,6 +351,7 @@ if __name__ == '__main__':
     for mmsi, color in zip([drone_mmsi, munkholmen_mmsi], plt.rcParams['axes.color_cycle']):
         scat_ax.scatter(min_range[mmsi], min_pd[mmsi],c=color)
     f_ax.legend()
+    f_fig.savefig('figs/empirical_detection_probability.pdf')
 
     pd_ax[0].set_title('Detection probability')
 

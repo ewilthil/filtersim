@@ -44,7 +44,7 @@ if __name__ == '__main__':
     for n_mc in range(N_MC):
         initial_distribution = autopart.UniformSampleDistribution(max_pos=setup.radar_range, max_vel=setup_trackers.maximum_velocity)
         transition_distribution = autopart.NearlyConstantVelocityDistribution(q=setup_trackers.target_process_noise_covariance)
-        measurement_distribution = autopart.CartesianMeasurementDistribution(r=setup.measurement_covariance_single_axis)
+        measurement_distribution = autopart.CartesianMeasurementDistribution(r=setup.measurement_covariance)
         measurement_originated_distribution = autopart.UniformSampleDistribution(max_pos=25, max_vel=setup_trackers.maximum_velocity)
         pf_tracker = autopart.ParticleFilterTracker(
                 initial_distribution,

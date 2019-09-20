@@ -23,6 +23,8 @@ _LAND_DATA = [
 
 _RADAR_LOC = (500, 200)
 
+_COL_RED = '#e34a33'
+
 _BOAT_DATA = lambda l, w : [
         (l/2, 0),
         (l/4, w/2),
@@ -87,7 +89,14 @@ def draw_land(ax):
     ax.add_patch(patch)
 
 def draw_radar(ax):
-    patch = mpatches.Ellipse(_RADAR_LOC, width, height, angle)
+    radar_color = '#f7f7f7'
+    angle = np.deg2rad(45)
+    length = 90
+    width = length/3
+    pole_length = length
+    back_patch = mpatches.Ellipse(_RADAR_LOC, width, height, angle, color=radar_color)
+    front_patch = mpatches.Ellipse(_RADAR_LOC, width, height, angle, color=radar_color)
+    ax.add_patch(patch)
 
 def adjust_size_and_ticks(ax):
     ax.set_aspect('equal')
@@ -101,9 +110,8 @@ if __name__ == "__main__":
     boat_fig, boat_ax = plt.subplots()
     for ax in [land_ax, boat_ax]:
         draw_sea(ax)
-        boat_north.draw(ax, 'red')
-        boat_east.draw(ax, 'red')
-
+        boat_north.draw(ax, _COL_RED)
+        boat_east.draw(ax, _COL_RED)
     draw_land(land_ax)
     boat_self.draw(boat_ax, '#74c476')
     for ax in [land_ax, boat_ax]:
